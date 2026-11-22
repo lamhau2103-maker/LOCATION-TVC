@@ -10,12 +10,26 @@ import {
   Layers,
   Lock,
   RefreshCw,
+  RotateCcw,
+  Save,
   Search,
   Sparkles,
+  Tag,
   X,
 } from 'lucide-react';
-import { Farm, IconChoice, PositionDiagnosticItem } from '../types';
-import { getFarmKey, resolveFarmIconType } from '../utils/icons';
+import { PRESET_LOCATION_LABELS } from '../config';
+import {
+  Farm,
+  FarmCustomLabels,
+  IconChoice,
+  PositionDiagnosticItem,
+} from '../types';
+import {
+  getDefaultLocationLabel,
+  getFarmKey,
+  getLocationDisplayLabel,
+  resolveFarmIconType,
+} from '../utils/icons';
 import { CuteCategoryIcon } from './CursorSpotlight';
 
 interface AdminLoginModalProps {
@@ -165,40 +179,49 @@ interface BulkIconModalProps {
   isOpen: boolean;
   onClose: () => void;
   farms: Farm[];
+  customLabels: FarmCustomLabels;
   isServerConnected: boolean;
   onSelectFarmIcon: (farm: Farm, choice: IconChoice) => Promise<void>;
   onBulkSelectFarmsIcon: (
     targetFarms: Farm[],
     choice: IconChoice
   ) => Promise<void>;
+  onSaveCustomLabel: (farm: Farm, label: string) => Promise<void>;
 }
 
 /**
- * BẢNG "CHỌN ICON HÀNG LOẠT" DÀNH CHO QUẢN TRỊ VIÊN
- * - Trên điện thoại (< 640px): chuyển thành bottom-sheet toàn chiều ngang, hiển thị từng trang trại dạng thẻ dọc gọn gàng.
+ * BẢNG "CHỌN ICON & NHÃN MÔ TẢ HÀNG LOẠT" DÀNH CHO QUẢN TRỊ VIÊN
+ * - Cho phép chọn icon (Gà / Heo / Tự động) VÀ sửa nhanh Nhãn mô tả hiển thị (lưu lên Upstash Redis) cho từng điểm.
  */
 export const BulkIconModal: React.FC<BulkIconModalProps> = ({
   isOpen,
   onClose,
   farms,
+  customLabels,
   isServerConnected,
   onSelectFarmIcon,
   onBulkSelectFarmsIcon,
+  onSaveCustomLabel,
 }) => {
   const [query, setQuery] = useState('');
   const [savingKey, setSavingKey] = useState<string | null>(null);
+  const [savingLabelKey, setSavingLabelKey] = useState<string | null>(null);
+  const [labelDrafts, setLabelDrafts] = useState<Record<string, string>>({});
   const [isBulkSaving, setIsBulkSaving] = useState(false);
 
   const filteredFarms = useMemo(() => {
     const q = query.trim().toLowerCase().normalize('NFC');
     if (!q) return farms;
-    return farms.filter(
-      (f) =>
+    return farms.filter((f) => {
+      const displayLabel = getLocationDisplayLabel(f, customLabels);
+      return (
         f.name.toLowerCase().normalize('NFC').includes(q) ||
         f.type.toLowerCase().normalize('NFC').includes(q) ||
-        f.description.toLowerCase().normalize('NFC').includes(q)
-    );
-  }, [farms, query]);
+        f.description.toLowerCase().normalize('NFC').includes(q) ||
+        displayLabel.toLowerCase().normalize('NFC').includes(q)
+      );
+    });
+  }, [farms, query, customLabels]);
 
   const handleRowClick = async (farm: Farm, choice: IconChoice) => {
     const key = farm.farmKey || getFarmKey(farm.lat, farm.lng);
@@ -207,6 +230,21 @@ export const BulkIconModal: React.FC<BulkIconModalProps> = ({
       await onSelectFarmIcon(farm, choice);
     } finally {
       setSavingKey(null);
+    }
+  };
+
+  const handleSaveRowLabel = async (farm: Farm, nextLabel: string) => {
+    const key = farm.farmKey || getFarmKey(farm.lat, farm.lng);
+    setSavingLabelKey(key);
+    try {
+      await onSaveCustomLabel(farm, nextLabel.trim());
+      setLabelDrafts((prev) => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+    } finally {
+      setSavingLabelKey(null);
     }
   };
 
@@ -236,8 +274,15 @@ export const BulkIconModal: React.FC<BulkIconModalProps> = ({
             exit={{ opacity: 0, scale: 0.96, y: 24 }}
             transition={{ type: 'spring', stiffness: 280, damping: 24 }}
             onClick={(e) => e.stopPropagation()}
-            className="relative flex max-h-[calc(100dvh-24px)] w-full max-w-3xl flex-col overflow-hidden rounded-t-[26px] border border-white/95 bg-white/95 text-[#0f2a24] shadow-[0_28px_70px_rgba(15,42,36,0.3)] backdrop-blur-2xl sm:rounded-[26px]"
+            className="relative flex max-h-[calc(100dvh-24px)] w-full max-w-4xl flex-col overflow-hidden rounded-t-[26px] border border-white/95 bg-white/95 text-[#0f2a24] shadow-[0_28px_70px_rgba(15,42,36,0.3)] backdrop-blur-2xl sm:rounded-[26px]"
           >
+            {/* Datalist gợi ý nhanh nhãn mô tả */}
+            <datalist id="preset-location-labels">
+              {PRESET_LOCATION_LABELS.map((preset) => (
+                <option key={preset} value={preset} />
+              ))}
+            </datalist>
+
             {/* Header */}
             <div className="flex items-center justify-between gap-3 border-b border-emerald-950/10 px-4 py-3.5 sm:px-6 sm:py-4">
               <div className="flex min-w-0 items-center gap-3">
@@ -246,7 +291,7 @@ export const BulkIconModal: React.FC<BulkIconModalProps> = ({
                 </div>
                 <div className="min-w-0">
                   <h3 className="font-display truncate text-sm font-extrabold text-[#0f2a24] sm:text-lg">
-                    Chọn Icon Hàng Loạt ({farms.length} trang trại)
+                    Chọn Icon & Nhãn Mô Tả ({farms.length} địa điểm)
                   </h3>
                   <p className="truncate text-[11px] font-medium text-emerald-950/65 sm:text-xs">
                     {isServerConnected
@@ -335,15 +380,29 @@ export const BulkIconModal: React.FC<BulkIconModalProps> = ({
                   const currentChoice: IconChoice = farm.manualIcon || 'auto';
                   const autoDetected = resolveFarmIconType(farm, {});
                   const isRowSaving = savingKey === key || isBulkSaving;
+                  const isRowLabelSaving = savingLabelKey === key;
                   const displayIconKey =
-                    farm.category === 'other' && farm.subType
+                    farm.subType === 'hub'
+                      ? 'hub'
+                      : farm.category === 'other' && farm.subType
                       ? farm.subType
                       : farm.category;
+
+                  const currentResolvedLabel = getLocationDisplayLabel(
+                    farm,
+                    customLabels
+                  );
+                  const defaultAutoLabel = getDefaultLocationLabel(farm);
+                  const hasCustomLabel = Boolean(customLabels[key]?.trim());
+                  const draftLabel =
+                    key in labelDrafts ? labelDrafts[key] : currentResolvedLabel;
+                  const isLabelDirty =
+                    draftLabel.trim() !== currentResolvedLabel.trim();
 
                   return (
                     <div
                       key={farm.id}
-                      className="flex flex-col gap-2.5 py-3 sm:flex-row sm:items-center sm:justify-between"
+                      className="flex flex-col gap-2.5 py-3 lg:flex-row lg:items-center lg:justify-between"
                     >
                       {/* Cột trái: Icon hiện tại + Tên trang trại + Toạ độ gốc */}
                       <div className="flex min-w-0 flex-1 items-center gap-3">
@@ -351,7 +410,9 @@ export const BulkIconModal: React.FC<BulkIconModalProps> = ({
                           className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border-2 bg-white shadow-xs"
                           style={{
                             borderColor:
-                              farm.category === 'chicken'
+                              displayIconKey === 'hub'
+                                ? '#2b8fd0'
+                                : farm.category === 'chicken'
                                 ? '#fb923c'
                                 : farm.category === 'pig'
                                 ? '#fb7185'
@@ -387,13 +448,71 @@ export const BulkIconModal: React.FC<BulkIconModalProps> = ({
                         </div>
                       </div>
 
+                      {/* Cột giữa: Chỉnh sửa Nhãn mô tả hiển thị */}
+                      <div className="flex shrink-0 items-center gap-1.5 lg:w-[230px]">
+                        <div className="relative flex-1">
+                          <Tag className="pointer-events-none absolute top-1/2 left-2.5 h-3.5 w-3.5 -translate-y-1/2 text-[#2b8fd0]/75" />
+                          <input
+                            type="text"
+                            list="preset-location-labels"
+                            value={draftLabel}
+                            maxLength={60}
+                            disabled={isRowLabelSaving}
+                            onChange={(e) =>
+                              setLabelDrafts((prev) => ({
+                                ...prev,
+                                [key]: e.target.value,
+                              }))
+                            }
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                handleSaveRowLabel(farm, draftLabel);
+                              }
+                            }}
+                            placeholder={defaultAutoLabel}
+                            title="Nhãn mô tả hiển thị (chọn gợi ý hoặc nhập tự do)"
+                            className={`h-[38px] w-full rounded-xl border bg-white pr-2 pl-7 text-xs font-bold text-[#0f2a24] focus:border-[#2b8fd0] focus:outline-none ${
+                              hasCustomLabel
+                                ? 'border-[#2b8fd0]/50 bg-sky-50/40'
+                                : 'border-emerald-950/15'
+                            }`}
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          disabled={isRowLabelSaving || !isLabelDirty}
+                          onClick={() => handleSaveRowLabel(farm, draftLabel)}
+                          title="Lưu nhãn mô tả"
+                          className={`flex h-[38px] shrink-0 items-center justify-center gap-1 rounded-xl px-2.5 text-xs font-extrabold transition-all cursor-pointer ${
+                            isLabelDirty
+                              ? 'bg-[#2b8fd0] text-white shadow-xs hover:bg-[#1e74ad]'
+                              : 'border border-emerald-950/10 bg-emerald-950/[0.03] text-emerald-950/35'
+                          }`}
+                        >
+                          <Save className="h-3.5 w-3.5" />
+                          <span className="hidden sm:inline">Lưu</span>
+                        </button>
+                        {hasCustomLabel && (
+                          <button
+                            type="button"
+                            disabled={isRowLabelSaving}
+                            onClick={() => handleSaveRowLabel(farm, '')}
+                            title={`Khôi phục nhãn tự động (${defaultAutoLabel})`}
+                            className="flex h-[38px] w-[34px] shrink-0 items-center justify-center rounded-xl border border-emerald-950/12 bg-white text-emerald-950/60 hover:border-[#d9261c] hover:text-[#d9261c] cursor-pointer"
+                          >
+                            <RotateCcw className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                      </div>
+
                       {/* Cột phải: 3 nút chọn nhanh Gà / Heo / Tự động */}
                       <div className="grid shrink-0 grid-cols-3 gap-1.5 sm:flex sm:items-center">
                         <button
                           type="button"
                           disabled={isRowSaving}
                           onClick={() => handleRowClick(farm, 'chicken')}
-                          className={`flex min-h-[38px] items-center justify-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-extrabold transition-all cursor-pointer ${
+                          className={`flex min-h-[38px] items-center justify-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-xs font-extrabold transition-all cursor-pointer ${
                             currentChoice === 'chicken'
                               ? 'border-[#fb923c] bg-[#fb923c] text-white shadow-sm'
                               : 'border-emerald-950/12 bg-white text-[#0f2a24] hover:border-[#fb923c]'
@@ -410,7 +529,7 @@ export const BulkIconModal: React.FC<BulkIconModalProps> = ({
                           type="button"
                           disabled={isRowSaving}
                           onClick={() => handleRowClick(farm, 'pig')}
-                          className={`flex min-h-[38px] items-center justify-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-extrabold transition-all cursor-pointer ${
+                          className={`flex min-h-[38px] items-center justify-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-xs font-extrabold transition-all cursor-pointer ${
                             currentChoice === 'pig'
                               ? 'border-[#fb7185] bg-[#fb7185] text-white shadow-sm'
                               : 'border-emerald-950/12 bg-white text-[#0f2a24] hover:border-[#fb7185]'
@@ -427,7 +546,7 @@ export const BulkIconModal: React.FC<BulkIconModalProps> = ({
                           type="button"
                           disabled={isRowSaving}
                           onClick={() => handleRowClick(farm, 'auto')}
-                          className={`flex min-h-[38px] items-center justify-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-bold transition-all cursor-pointer ${
+                          className={`flex min-h-[38px] items-center justify-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-xs font-bold transition-all cursor-pointer ${
                             currentChoice === 'auto'
                               ? 'border-[#14b8a6] bg-[#14b8a6] text-white shadow-sm'
                               : 'border-emerald-950/12 bg-white text-[#0f2a24] hover:border-[#14b8a6]'

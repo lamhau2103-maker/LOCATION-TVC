@@ -27,15 +27,17 @@ export default async function handler(req: any, res: any) {
 
   const kmlUrl = `https://www.google.com/maps/d/kml?mid=${encodeURIComponent(
     myMapsId
-  )}&forcekml=1`;
+  )}&forcekml=1&t=${Date.now()}`;
 
   try {
     const response = await fetch(kmlUrl, {
+      cache: 'no-store',
       headers: {
         'User-Agent':
           'Mozilla/5.0 (compatible; ThaiVietCorpSync/3.0; +https://vercel.com)',
         Accept:
           'application/vnd.google-earth.kml+xml, application/xml, text/xml, */*',
+        'Cache-Control': 'no-cache',
       },
     });
 
@@ -62,7 +64,7 @@ export default async function handler(req: any, res: any) {
     res.setHeader('Content-Type', 'application/xml; charset=utf-8');
     res.setHeader(
       'Cache-Control',
-      's-maxage=60, stale-while-revalidate=300'
+      'no-store, no-cache, must-revalidate, proxy-revalidate'
     );
     res.status(200).send(kmlText);
   } catch (error) {

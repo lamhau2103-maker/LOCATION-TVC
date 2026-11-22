@@ -1,6 +1,11 @@
 import * as maplibregl from 'maplibre-gl';
 import { ARC_EXCLUDE_KEYWORDS, ARC_INCLUDE_KEYWORDS } from '../config';
-import { FarmCategory, FarmSubType, IconChoice } from '../types';
+import {
+  FarmCategory,
+  FarmCustomLabels,
+  FarmSubType,
+  IconChoice,
+} from '../types';
 
 /**
  * MODULE BỘ ICON TRANG TRẠI & PHÂN LOẠI ĐƯỜNG NỐI (src/utils/icons.ts)
@@ -104,7 +109,49 @@ export function matchesIncludeKeywords(rawLayerAndName: string): boolean {
 }
 
 /**
- * Phân loại chi tiết cho nhóm "Khác" (văn phòng / kho / điểm rửa xe / nhà trại khác)
+ * Tìm điểm "Nhà Máy Cám" thực tế trong dữ liệu Google My Maps đã nạp.
+ * Ưu tiên tên chứa "nha may cam" (không dấu, chữ thường), dự phòng chứa "nha may".
+ */
+export function findFeedMill<
+  T extends { id?: string; name?: string; type?: string; lat: number; lng: number }
+>(locations: T[]): T | null {
+  if (!locations || locations.length === 0) return null;
+
+  const exactNameMatch = locations.find((loc) =>
+    normalizeMatchText(loc.name || '').includes('nha may cam')
+  );
+  if (exactNameMatch) return exactNameMatch;
+
+  const combinedMatch = locations.find((loc) =>
+    normalizeMatchText(`${loc.type || ''} ${loc.name || ''}`).includes(
+      'nha may cam'
+    )
+  );
+  if (combinedMatch) return combinedMatch;
+
+  const fallbackNameMatch = locations.find((loc) =>
+    normalizeMatchText(loc.name || '').includes('nha may')
+  );
+  if (fallbackNameMatch) return fallbackNameMatch;
+
+  const fallbackCombined = locations.find((loc) =>
+    normalizeMatchText(`${loc.type || ''} ${loc.name || ''}`).includes('nha may')
+  );
+  return fallbackCombined || null;
+}
+
+export function isFeedMillText(rawType = '', rawName = ''): boolean {
+  const norm = normalizeMatchText(`${rawType} ${rawName}`);
+  return (
+    norm.includes('nha may cam') ||
+    norm.includes('nha may') ||
+    norm.includes('feed mill') ||
+    norm.includes('feedmill')
+  );
+}
+
+/**
+ * Phân loại chi tiết cho nhóm "Khác" (nhà máy cám / văn phòng / kho / điểm rửa xe / nhà trại khác)
  */
 export function detectOtherSubType(
   rawType = '',
@@ -113,11 +160,23 @@ export function detectOtherSubType(
   const norm = normalizeMatchText(`${rawType} ${rawName}`);
   const padded = ` ${norm} `;
 
+  // Nhận diện Nhà Máy Cám trước tiên để không bị nhầm thành Văn phòng
+  if (
+    norm.includes('nha may cam') ||
+    norm.includes('nha may') ||
+    norm.includes('feed mill') ||
+    norm.includes('feedmill') ||
+    norm.includes('factory')
+  ) {
+    return 'hub';
+  }
+
   if (
     norm.includes('rua xe') ||
     norm.includes('diem rua') ||
     norm.includes('tram rua') ||
     norm.includes('sat khuan') ||
+    norm.includes('sat trung') ||
     norm.includes('khu trung')
   ) {
     return 'wash';
@@ -128,14 +187,14 @@ export function detectOtherSubType(
   }
 
   if (
+    norm.includes('tru so') ||
     norm.includes('van phong') ||
     padded.includes(' vp ') ||
     norm.startsWith('vp ') ||
     norm.includes('office') ||
     norm.includes('bao ve') ||
     norm.includes('cong ty') ||
-    norm.includes('nha may') ||
-    norm.includes('factory')
+    norm.includes('chi nhanh')
   ) {
     return 'office';
   }
@@ -144,13 +203,110 @@ export function detectOtherSubType(
 }
 
 /**
- * Kiểm tra một điểm có được nối đường cung vệt sáng từ NHÀ MÁY TRUNG TÂM hay không:
- * 1. Chuẩn hoá chuỗi: chữ thường, bỏ dấu tiếng Việt (đ -> d), gom khoảng trắng.
- * 2. Văn bản xét = tên layer/folder (farm.type) + tên điểm (farm.name).
- * 3. LOẠI TRỪ TRƯỚC: chứa bất kỳ từ khoá nào trong ARC_EXCLUDE_KEYWORDS thì KHÔNG nối
- *    (kể cả "Kho heo", "Văn phòng", "Điểm rửa xe"...).
- * 4. Nếu quản trị viên đã chọn thủ công icon gà/heo thì coi là nối được (trừ khi đã dính từ khoá loại trừ ở bước 3).
- * 5. Nếu không bị loại: chỉ nối khi layer/folder hoặc tên điểm chứa từ khoá trong ARC_INCLUDE_KEYWORDS.
+ * Tự động tạo nhãn mô tả chuẩn xác cho từng điểm (khi Admin chưa đặt nhãn tùy chỉnh):
+ * - "Nhà Máy Cám" -> "Nhà máy cám"
+ * - "Trụ sở..." / "Thái Việt Corporation" -> "Trụ sở chính"
+ * - "Kho..." -> "Kho trung tâm"
+ * - "Điểm rửa xe..." -> "Điểm rửa xe"
+ * - Trại heo -> "Trại heo", Trại gà -> "Trại gà", Văn phòng -> "Văn phòng"
+ */
+export function getDefaultLocationLabel(farm: {
+  name?: string;
+  type?: string;
+  category?: FarmCategory;
+  subType?: FarmSubType;
+  isFeedMill?: boolean;
+}): string {
+  const normName = normalizeMatchText(farm.name || '');
+  const normAll = normalizeMatchText(`${farm.type || ''} ${farm.name || ''}`);
+
+  if (farm.isFeedMill || farm.subType === 'hub' || isFeedMillText(farm.type, farm.name)) {
+    return 'Nhà máy cám';
+  }
+
+  if (
+    farm.subType === 'wash' ||
+    normAll.includes('rua xe') ||
+    normAll.includes('diem rua') ||
+    normAll.includes('tram rua') ||
+    normAll.includes('sat khuan') ||
+    normAll.includes('sat trung')
+  ) {
+    return 'Điểm rửa xe';
+  }
+
+  if (
+    farm.subType === 'warehouse' ||
+    normAll.includes('kho ') ||
+    normName.startsWith('kho') ||
+    normAll.includes('warehouse')
+  ) {
+    return 'Kho trung tâm';
+  }
+
+  if (
+    normAll.includes('tru so') ||
+    normName.includes('thai viet corporation') ||
+    (normName.includes('cong ty') && !normName.includes('van phong'))
+  ) {
+    return 'Trụ sở chính';
+  }
+
+  if (farm.category === 'pig') {
+    return 'Trại heo';
+  }
+
+  if (farm.category === 'chicken') {
+    return 'Trại gà';
+  }
+
+  if (
+    farm.subType === 'office' ||
+    normAll.includes('van phong') ||
+    ` ${normAll} `.includes(' vp ') ||
+    normName.startsWith('vp ') ||
+    normAll.includes('office')
+  ) {
+    return 'Văn phòng';
+  }
+
+  return 'Khác';
+}
+
+/**
+ * Lấy nhãn mô tả hiển thị của địa điểm:
+ * Ưu tiên nhãn tùy chỉnh của Admin (lưu trong Upstash Redis) nếu có;
+ * nếu chưa sửa thì trả về nhãn tự động thông minh.
+ */
+export function getLocationDisplayLabel(
+  farm: {
+    lat: number;
+    lng: number;
+    farmKey?: string;
+    name?: string;
+    type?: string;
+    category?: FarmCategory;
+    subType?: FarmSubType;
+    isFeedMill?: boolean;
+    customLabel?: string;
+  },
+  customLabels?: FarmCustomLabels
+): string {
+  const key = farm.farmKey || getFarmKey(farm.lat, farm.lng);
+  const override = customLabels?.[key]?.trim() || farm.customLabel?.trim();
+  if (override) return override;
+  return getDefaultLocationLabel(farm);
+}
+
+/**
+ * Kiểm tra một điểm có được nối đường cung vệt sáng từ NHÀ MÁY CÁM hay không:
+ * 1. Không bao giờ tự nối tới chính Nhà Máy Cám.
+ * 2. Chuẩn hoá chuỗi: chữ thường, bỏ dấu tiếng Việt (đ -> d), gom khoảng trắng.
+ * 3. Văn bản xét = tên layer/folder (farm.type) + tên điểm (farm.name).
+ * 4. LOẠI TRỪ TRƯỚC: chứa bất kỳ từ khoá nào trong ARC_EXCLUDE_KEYWORDS thì KHÔNG nối
+ *    (kể cả "Kho heo", "Văn phòng", "Điểm rửa xe", "Nhà máy"...).
+ * 5. Nếu quản trị viên đã chọn thủ công icon gà/heo thì coi là nối được (trừ khi đã dính từ khoá loại trừ).
+ * 6. Nếu không bị loại: chỉ nối khi layer/folder hoặc tên điểm chứa từ khoá trong ARC_INCLUDE_KEYWORDS.
  */
 export function isConnectableFarm(
   farm: {
@@ -159,17 +315,23 @@ export function isConnectableFarm(
     type?: string;
     name?: string;
     manualIcon?: IconChoice;
+    subType?: FarmSubType;
+    isFeedMill?: boolean;
   },
   manualOverrides?: Record<string, 'chicken' | 'pig'>
 ): boolean {
+  if (farm.isFeedMill || farm.subType === 'hub') {
+    return false;
+  }
+
   const layerAndName = `${farm.type || ''} ${farm.name || ''}`;
 
-  // Bước 3: Loại trừ trước
+  // Loại trừ trước (kể cả Nhà Máy Cám, Kho heo, Văn phòng, Điểm rửa xe)
   if (matchesExcludeKeywords(layerAndName)) {
     return false;
   }
 
-  // Bước 5: Quản trị viên chọn thủ công Gà / Heo ( và không dính từ khoá loại trừ )
+  // Quản trị viên chọn thủ công Gà / Heo (và không dính từ khoá loại trừ)
   const key = getFarmKey(farm.lat, farm.lng);
   const manual =
     farm.manualIcon && farm.manualIcon !== 'auto'
@@ -179,7 +341,7 @@ export function isConnectableFarm(
     return true;
   }
 
-  // Bước 4: Khớp từ khoá trong ARC_INCLUDE_KEYWORDS
+  // Khớp từ khoá trong ARC_INCLUDE_KEYWORDS
   return matchesIncludeKeywords(layerAndName);
 }
 
@@ -365,289 +527,510 @@ export function getFarmIconSvg(
   </svg>`;
 }
 
+// Bộ nhớ đệm ảnh Logo hoa sen công ty (cho ghim Nhà Máy Cám 256x256 siêu nét)
+let cachedHubLogoImage: HTMLImageElement | null = null;
+let cachedHubLogoUrl = '';
+const hubLogoReadyListeners = new Set<() => void>();
+
 /**
- * VẼ TRỰC TIẾP ICON LÊN HTML5 CANVAS 2D (ĐỒNG BỘ 100%, KHÔNG PHỤ THUỘC Image.onload BẤT ĐỒNG BỘ)
- * Khung logic 64x64 -> vẽ ở độ phân giải vật lý 128x128 (pixelRatio: 2, hệ số scale = 2).
- * Đỉnh dưới cùng của mũi ghim nằm ĐÚNG tại (32, 64) - sát mép dưới cùng chính giữa của khung 64x64
- * để khi MapLibre neo `icon-anchor: 'bottom'` và `icon-offset: [0, 0]`, mũi ghim trùng khít 100% với toạ độ (lat, lng).
+ * Tải trước ảnh Logo hoa sen (public/logo.png hoặc logo tuỳ chỉnh) để vẽ trực tiếp vào ghim Nhà Máy Cám 256x256px.
+ * Khi ảnh tải xong sẽ tự động gọi lại toàn bộ listener để cập nhật lại texture MapLibre & Three.js tức thì.
+ */
+export function preloadHubLogo(url: string, onReady?: () => void): () => void {
+  if (onReady) {
+    hubLogoReadyListeners.add(onReady);
+  }
+
+  if (typeof window !== 'undefined' && url) {
+    if (cachedHubLogoUrl === url && cachedHubLogoImage?.complete && cachedHubLogoImage.naturalWidth > 0) {
+      onReady?.();
+    } else if (cachedHubLogoUrl !== url) {
+      cachedHubLogoUrl = url;
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => {
+        cachedHubLogoImage = img;
+        hubLogoReadyListeners.forEach((cb) => {
+          try {
+            cb();
+          } catch {
+            // ignore
+          }
+        });
+      };
+      img.src = url;
+    }
+  }
+
+  return () => {
+    if (onReady) {
+      hubLogoReadyListeners.delete(onReady);
+    }
+  };
+}
+
+/**
+ * VẼ BIỂU TƯỢNG 3D CHÂN THỰC SIÊU NÉT BÊN TRONG GHIM (HỆ TOẠ ĐỘ LOGIC 64x64 -> RENDER 256x256 RETINA)
+ * Tâm huy hiệu nằm tại (32, 23.8) với bán kính khoang chứa ~15.4.
  */
 function drawInnerPictogram2D(
   ctx: CanvasRenderingContext2D,
   subType: FarmSubType | 'hub'
 ): void {
   ctx.save();
-  // Tâm huy hiệu nằm tại (32, 24) trong hệ toạ độ 64x64
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+
   if (subType === 'chicken') {
-    // Mào đỏ phía trên đầu gà
-    ctx.fillStyle = '#ef4444';
-    ctx.strokeStyle = '#b91c1c';
-    ctx.lineWidth = 1.4;
+    // 1. Mào gà đỏ 3D có đổ bóng nổi bật
+    const combGrad = ctx.createLinearGradient(28, 9, 36, 17);
+    combGrad.addColorStop(0, '#ff6b6b');
+    combGrad.addColorStop(0.5, '#ef4444');
+    combGrad.addColorStop(1, '#b91c1c');
+    ctx.fillStyle = combGrad;
+    ctx.strokeStyle = '#7f1d1d';
+    ctx.lineWidth = 1.1;
     ctx.beginPath();
-    ctx.arc(28.5, 13.8, 2.3, 0, Math.PI * 2);
-    ctx.arc(31.8, 12.6, 2.7, 0, Math.PI * 2);
-    ctx.arc(35.0, 14.0, 2.2, 0, Math.PI * 2);
+    ctx.arc(28.3, 14.3, 2.5, 0, Math.PI * 2);
+    ctx.arc(31.8, 12.6, 3.0, 0, Math.PI * 2);
+    ctx.arc(35.2, 14.2, 2.4, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
 
-    // Thân/đầu gà tròn cam #fb923c
-    ctx.fillStyle = '#fb923c';
-    ctx.strokeStyle = '#9a3412';
-    ctx.lineWidth = 1.8;
+    // Vệt sáng bóng trên đỉnh mào
+    ctx.fillStyle = 'rgba(255,255,255,0.45)';
     ctx.beginPath();
-    ctx.arc(31.2, 24.5, 8.6, 0, Math.PI * 2);
+    ctx.ellipse(31.2, 11.4, 1.3, 0.7, -0.25, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 2. Thân / đầu gà 3D tạo khối cầu vàng cam ấm áp
+    const bodyGrad = ctx.createRadialGradient(28.5, 19.8, 1.5, 31.2, 24.4, 10.5);
+    bodyGrad.addColorStop(0, '#fef08a');
+    bodyGrad.addColorStop(0.32, '#fdba74');
+    bodyGrad.addColorStop(0.75, '#f97316');
+    bodyGrad.addColorStop(1, '#c2410c');
+    ctx.fillStyle = bodyGrad;
+    ctx.strokeStyle = '#9a3412';
+    ctx.lineWidth = 1.45;
+    ctx.beginPath();
+    ctx.arc(31.0, 24.4, 9.0, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
 
-    // Cánh nhỏ cam sáng
-    ctx.fillStyle = '#fdba74';
+    // 3. Cánh gà lông vũ nổi 3D bên trái
+    const wingGrad = ctx.createLinearGradient(23, 22, 31, 29);
+    wingGrad.addColorStop(0, '#ffedd5');
+    wingGrad.addColorStop(0.6, '#fb923c');
+    wingGrad.addColorStop(1, '#ea580c');
+    ctx.fillStyle = wingGrad;
     ctx.strokeStyle = '#9a3412';
-    ctx.lineWidth = 1.4;
+    ctx.lineWidth = 1.15;
     ctx.beginPath();
-    ctx.ellipse(27.8, 25.4, 3.2, 2.2, -0.25, 0, Math.PI * 2);
+    ctx.ellipse(27.0, 26.0, 3.8, 2.5, -0.32, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
 
-    // Mỏ vàng nhọn bên phải
-    ctx.fillStyle = '#facc15';
+    // 4. Mỏ vàng cam 3D sắc nét (mỏ trên sáng, mỏ dưới đậm)
+    const beakTopGrad = ctx.createLinearGradient(39, 21.8, 45, 24.4);
+    beakTopGrad.addColorStop(0, '#fef08a');
+    beakTopGrad.addColorStop(0.55, '#facc15');
+    beakTopGrad.addColorStop(1, '#ea580c');
+    ctx.fillStyle = beakTopGrad;
     ctx.strokeStyle = '#9a3412';
-    ctx.lineWidth = 1.4;
+    ctx.lineWidth = 1.15;
+    ctx.lineJoin = 'round';
     ctx.beginPath();
-    ctx.moveTo(39.0, 22.4);
-    ctx.lineTo(44.2, 24.3);
-    ctx.lineTo(39.0, 26.2);
+    ctx.moveTo(39.0, 22.0);
+    ctx.lineTo(44.8, 24.2);
+    ctx.lineTo(39.0, 24.6);
     ctx.closePath();
     ctx.fill();
     ctx.stroke();
 
-    // Yếm đỏ dưới mỏ
-    ctx.fillStyle = '#ef4444';
+    ctx.fillStyle = '#eab308';
     ctx.beginPath();
-    ctx.arc(38.6, 27.6, 1.7, 0, Math.PI * 2);
+    ctx.moveTo(39.0, 24.6);
+    ctx.lineTo(43.6, 24.5);
+    ctx.lineTo(39.0, 26.4);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    // 5. Yếm đỏ 3D dưới mỏ
+    const wattleGrad = ctx.createRadialGradient(38.2, 27.3, 0.3, 38.6, 27.9, 2.1);
+    wattleGrad.addColorStop(0, '#fca5a5');
+    wattleGrad.addColorStop(0.5, '#ef4444');
+    wattleGrad.addColorStop(1, '#991b1b');
+    ctx.fillStyle = wattleGrad;
+    ctx.beginPath();
+    ctx.ellipse(38.6, 28.0, 1.8, 2.2, 0.2, 0, Math.PI * 2);
     ctx.fill();
 
-    // Má hồng nhẹ
-    ctx.fillStyle = 'rgba(239, 68, 68, 0.42)';
+    // 6. Má ửng hồng nhẹ
+    const cheekGrad = ctx.createRadialGradient(33.2, 25.8, 0.2, 33.2, 25.8, 2.2);
+    cheekGrad.addColorStop(0, 'rgba(244, 63, 94, 0.45)');
+    cheekGrad.addColorStop(1, 'rgba(244, 63, 94, 0)');
+    ctx.fillStyle = cheekGrad;
     ctx.beginPath();
-    ctx.arc(28.4, 26.0, 1.7, 0, Math.PI * 2);
+    ctx.arc(33.2, 25.8, 2.2, 0, Math.PI * 2);
     ctx.fill();
 
-    // Mắt đen + chấm sáng trắng
-    ctx.fillStyle = '#1e293b';
+    // 7. Mắt đen long lanh 2 chấm sáng
+    ctx.fillStyle = '#0f172a';
     ctx.beginPath();
-    ctx.arc(34.2, 22.0, 1.75, 0, Math.PI * 2);
+    ctx.arc(34.4, 21.8, 2.0, 0, Math.PI * 2);
     ctx.fill();
     ctx.fillStyle = '#ffffff';
     ctx.beginPath();
-    ctx.arc(34.7, 21.4, 0.6, 0, Math.PI * 2);
+    ctx.arc(35.0, 21.1, 0.72, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(33.9, 22.5, 0.32, 0, Math.PI * 2);
     ctx.fill();
   } else if (subType === 'pig') {
-    // Hai tai heo cụp hai bên
-    ctx.fillStyle = '#f43f5e';
+    // 1. Hai tai heo 3D có viền ngoài & lòng tai hồng đậm
+    const drawPigEar = (isRight: boolean) => {
+      ctx.save();
+      if (isRight) {
+        ctx.translate(64, 0);
+        ctx.scale(-1, 1);
+      }
+      const earGrad = ctx.createLinearGradient(20, 12, 28, 20);
+      earGrad.addColorStop(0, '#fda4af');
+      earGrad.addColorStop(0.55, '#fb7185');
+      earGrad.addColorStop(1, '#e11d48');
+      ctx.fillStyle = earGrad;
+      ctx.strokeStyle = '#881337';
+      ctx.lineWidth = 1.3;
+      ctx.lineJoin = 'round';
+      ctx.beginPath();
+      ctx.moveTo(23.0, 20.0);
+      ctx.quadraticCurveTo(19.5, 13.5, 22.0, 12.2);
+      ctx.quadraticCurveTo(26.2, 12.8, 28.8, 15.8);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+
+      // Lòng tai hồng sẫm
+      ctx.fillStyle = '#f43f5e';
+      ctx.beginPath();
+      ctx.moveTo(23.5, 18.2);
+      ctx.quadraticCurveTo(21.7, 14.5, 23.0, 13.8);
+      ctx.quadraticCurveTo(25.2, 14.3, 27.0, 16.0);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+    };
+    drawPigEar(false);
+    drawPigEar(true);
+
+    // 2. Khuôn mặt heo 3D tạo khối hồng san hô bóng mịn
+    const faceGrad = ctx.createRadialGradient(29.5, 19.5, 1.8, 32, 24.4, 11);
+    faceGrad.addColorStop(0, '#ffe4e6');
+    faceGrad.addColorStop(0.32, '#fda4af');
+    faceGrad.addColorStop(0.72, '#fb7185');
+    faceGrad.addColorStop(1, '#e11d48');
+    ctx.fillStyle = faceGrad;
     ctx.strokeStyle = '#881337';
-    ctx.lineWidth = 1.6;
-
-    // Tai trái
+    ctx.lineWidth = 1.45;
     ctx.beginPath();
-    ctx.moveTo(23.5, 19.5);
-    ctx.lineTo(21.2, 13.0);
-    ctx.lineTo(28.2, 15.4);
-    ctx.closePath();
+    ctx.arc(32, 24.4, 9.4, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
 
-    // Tai phải
-    ctx.beginPath();
-    ctx.moveTo(40.5, 19.5);
-    ctx.lineTo(42.8, 13.0);
-    ctx.lineTo(35.8, 15.4);
-    ctx.closePath();
-    ctx.fill();
-    ctx.stroke();
+    // 3. Đôi má hồng 3D mềm mại
+    for (const cx of [25.6, 38.4]) {
+      const blush = ctx.createRadialGradient(cx, 25.0, 0.2, cx, 25.0, 2.4);
+      blush.addColorStop(0, 'rgba(225, 29, 72, 0.42)');
+      blush.addColorStop(1, 'rgba(225, 29, 72, 0)');
+      ctx.fillStyle = blush;
+      ctx.beginPath();
+      ctx.arc(cx, 25.0, 2.4, 0, Math.PI * 2);
+      ctx.fill();
+    }
 
-    // Mặt heo tròn hồng san hô #fb7185
-    ctx.fillStyle = '#fb7185';
+    // 4. Đôi mắt đen long lanh 2 điểm sáng
+    for (const ex of [27.9, 36.1]) {
+      ctx.fillStyle = '#0f172a';
+      ctx.beginPath();
+      ctx.arc(ex, 21.2, 1.85, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.arc(ex + 0.55, 20.55, 0.65, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(ex - 0.45, 21.85, 0.3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // 5. Mũi heo 3D bầu dục bóng mịn nổi khối
+    const snoutGrad = ctx.createLinearGradient(32, 23.6, 32, 30.8);
+    snoutGrad.addColorStop(0, '#fff1f2');
+    snoutGrad.addColorStop(0.55, '#fecdd3');
+    snoutGrad.addColorStop(1, '#fda4af');
+    ctx.fillStyle = snoutGrad;
     ctx.strokeStyle = '#881337';
-    ctx.lineWidth = 1.8;
+    ctx.lineWidth = 1.35;
     ctx.beginPath();
-    ctx.arc(32, 24.5, 9.2, 0, Math.PI * 2);
+    ctx.roundRect(26.2, 23.9, 11.6, 6.8, 3.4);
     ctx.fill();
     ctx.stroke();
 
-    // Hai mắt đen + chấm sáng trắng
-    ctx.fillStyle = '#1e293b';
+    // Vệt bóng đỉnh mũi
+    ctx.fillStyle = 'rgba(255,255,255,0.65)';
     ctx.beginPath();
-    ctx.arc(28.0, 21.6, 1.65, 0, Math.PI * 2);
-    ctx.arc(36.0, 21.6, 1.65, 0, Math.PI * 2);
+    ctx.ellipse(32, 25.0, 3.6, 0.75, 0, 0, Math.PI * 2);
     ctx.fill();
 
-    ctx.fillStyle = '#ffffff';
-    ctx.beginPath();
-    ctx.arc(28.4, 21.1, 0.55, 0, Math.PI * 2);
-    ctx.arc(36.4, 21.1, 0.55, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Mũi heo bầu dục hồng phấn rõ nét
-    ctx.fillStyle = '#ffe4e6';
-    ctx.strokeStyle = '#881337';
-    ctx.lineWidth = 1.6;
-    ctx.beginPath();
-    ctx.roundRect(26.6, 24.2, 10.8, 6.4, 3.2);
-    ctx.fill();
-    ctx.stroke();
-
-    // Hai lỗ mũi
-    ctx.fillStyle = '#be123c';
-    ctx.beginPath();
-    ctx.ellipse(30.0, 27.4, 1.15, 1.55, 0, 0, Math.PI * 2);
-    ctx.ellipse(34.0, 27.4, 1.15, 1.55, 0, 0, Math.PI * 2);
-    ctx.fill();
+    // Hai lỗ mũi 3D có chiều sâu
+    for (const nx of [29.8, 34.2]) {
+      ctx.fillStyle = '#9f1239';
+      ctx.beginPath();
+      ctx.ellipse(nx, 27.4, 1.25, 1.65, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#f43f5e';
+      ctx.beginPath();
+      ctx.ellipse(nx + 0.2, 27.9, 0.55, 0.7, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
   } else if (subType === 'hub') {
-    // Hoa sen Nhà máy Trung tâm Thái Việt xanh dương #2b8fd0
-    ctx.strokeStyle = '#1e3a8a';
+    // NHÀ MÁY CÁM THÁI VIỆT: Ưu tiên vẽ Logo Hoa sen thực tế (/logo.png) siêu sắc nét 256x256
+    if (
+      cachedHubLogoImage &&
+      cachedHubLogoImage.complete &&
+      cachedHubLogoImage.naturalWidth > 0
+    ) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(32, 23.8, 15.2, 0, Math.PI * 2);
+      ctx.clip();
+      // Cắt 78% phần trên của logo để tập trung rõ vào biểu tượng Hoa sen Thái Việt
+      const srcW = cachedHubLogoImage.naturalWidth;
+      const srcH = cachedHubLogoImage.naturalHeight * 0.78;
+      const drawSize = 27.5;
+      ctx.drawImage(
+        cachedHubLogoImage,
+        0,
+        0,
+        srcW,
+        srcH,
+        32 - drawSize / 2,
+        23.8 - drawSize / 2 + 0.5,
+        drawSize,
+        drawSize
+      );
+      ctx.restore();
+    } else {
+      // Dự phòng đồng bộ tức thì (trước khi /logo.png tải xong): Hoa sen 3D Thái Việt xanh dương ánh kim
+      ctx.strokeStyle = '#1e3a8a';
+      ctx.lineWidth = 1.25;
+      ctx.lineJoin = 'round';
+
+      const sidePetalGrad = ctx.createLinearGradient(23, 15, 41, 28);
+      sidePetalGrad.addColorStop(0, '#7dd3fc');
+      sidePetalGrad.addColorStop(0.5, '#38bdf8');
+      sidePetalGrad.addColorStop(1, '#0284c7');
+
+      ctx.fillStyle = sidePetalGrad;
+      ctx.beginPath();
+      ctx.moveTo(31.2, 26.8);
+      ctx.quadraticCurveTo(22.6, 24.2, 23.8, 15.8);
+      ctx.quadraticCurveTo(28.8, 18.8, 31.2, 26.8);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.moveTo(32.8, 26.8);
+      ctx.quadraticCurveTo(41.4, 24.2, 40.2, 15.8);
+      ctx.quadraticCurveTo(35.2, 18.8, 32.8, 26.8);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+
+      const centerPetalGrad = ctx.createLinearGradient(32, 11.5, 32, 27.5);
+      centerPetalGrad.addColorStop(0, '#bae6fd');
+      centerPetalGrad.addColorStop(0.4, '#2b8fd0');
+      centerPetalGrad.addColorStop(1, '#1d4ed8');
+      ctx.fillStyle = centerPetalGrad;
+      ctx.beginPath();
+      ctx.moveTo(32, 11.8);
+      ctx.quadraticCurveTo(26.8, 19.2, 32, 27.0);
+      ctx.quadraticCurveTo(37.2, 19.2, 32, 11.8);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+
+      const baseGrad = ctx.createLinearGradient(22, 26, 42, 33);
+      baseGrad.addColorStop(0, '#38bdf8');
+      baseGrad.addColorStop(0.5, '#2563eb');
+      baseGrad.addColorStop(1, '#1e3a8a');
+      ctx.fillStyle = baseGrad;
+      ctx.beginPath();
+      ctx.moveTo(21.8, 27.0);
+      ctx.quadraticCurveTo(27.2, 26.0, 32, 29.0);
+      ctx.quadraticCurveTo(36.8, 26.0, 42.2, 27.0);
+      ctx.quadraticCurveTo(39.0, 33.2, 32, 33.2);
+      ctx.quadraticCurveTo(25.0, 33.2, 21.8, 27.0);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+    }
+  } else if (subType === 'office') {
+    // Toà nhà văn phòng 3D hai khối sáng tối
+    const bldgGrad = ctx.createLinearGradient(23, 13, 41, 33);
+    bldgGrad.addColorStop(0, '#2dd4bf');
+    bldgGrad.addColorStop(0.55, '#14b8a6');
+    bldgGrad.addColorStop(1, '#0f766e');
+    ctx.fillStyle = bldgGrad;
+    ctx.strokeStyle = '#115e59';
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.roundRect(23.8, 13.4, 16.4, 19.8, 2.2);
+    ctx.fill();
+    ctx.stroke();
+
+    // Mảng kính phản sáng bên phải (chiều sâu 3D)
+    ctx.fillStyle = 'rgba(15, 118, 110, 0.28)';
+    ctx.fillRect(32, 14.1, 7.5, 18.4);
+
+    // Các ô cửa kính xanh sáng bóng
+    const windows = [
+      [26.4, 16.4],
+      [34.2, 16.4],
+      [26.4, 21.0],
+      [34.2, 21.0],
+    ];
+    for (const [wx, wy] of windows) {
+      ctx.fillStyle = '#f0fdfa';
+      ctx.beginPath();
+      ctx.roundRect(wx, wy, 3.4, 2.9, 0.6);
+      ctx.fill();
+    }
+
+    // Sảnh cửa chính
+    ctx.fillStyle = '#ccfbf1';
+    ctx.strokeStyle = '#115e59';
+    ctx.lineWidth = 1.1;
+    ctx.beginPath();
+    ctx.roundRect(29.6, 26.4, 4.8, 6.6, 0.8);
+    ctx.fill();
+    ctx.stroke();
+  } else if (subType === 'warehouse') {
+    // Nhà kho 3D mái dốc có đổ bóng & cửa cuốn kim loại
+    const roofGrad = ctx.createLinearGradient(21, 13, 43, 33);
+    roofGrad.addColorStop(0, '#2dd4bf');
+    roofGrad.addColorStop(0.5, '#14b8a6');
+    roofGrad.addColorStop(1, '#0f766e');
+    ctx.fillStyle = roofGrad;
+    ctx.strokeStyle = '#115e59';
     ctx.lineWidth = 1.4;
     ctx.lineJoin = 'round';
-
-    // Cánh sen trái
-    ctx.fillStyle = '#38bdf8';
     ctx.beginPath();
-    ctx.moveTo(31.2, 26.5);
-    ctx.quadraticCurveTo(23.5, 24.2, 24.5, 16.5);
-    ctx.quadraticCurveTo(29.0, 19.2, 31.2, 26.5);
+    ctx.moveTo(21.6, 20.8);
+    ctx.lineTo(32.0, 13.8);
+    ctx.lineTo(42.4, 20.8);
+    ctx.lineTo(42.4, 32.6);
+    ctx.lineTo(21.6, 32.6);
     ctx.closePath();
     ctx.fill();
     ctx.stroke();
 
-    // Cánh sen phải
-    ctx.beginPath();
-    ctx.moveTo(32.8, 26.5);
-    ctx.quadraticCurveTo(40.5, 24.2, 39.5, 16.5);
-    ctx.quadraticCurveTo(35.0, 19.2, 32.8, 26.5);
-    ctx.closePath();
-    ctx.fill();
-    ctx.stroke();
-
-    // Cánh sen chính giữa
-    ctx.fillStyle = '#2b8fd0';
-    ctx.beginPath();
-    ctx.moveTo(32, 12.8);
-    ctx.quadraticCurveTo(27.5, 19.5, 32, 26.8);
-    ctx.quadraticCurveTo(36.5, 19.5, 32, 12.8);
-    ctx.closePath();
-    ctx.fill();
-    ctx.stroke();
-
-    // Đế đài sen
-    ctx.fillStyle = '#2b8fd0';
-    ctx.beginPath();
-    ctx.moveTo(22.5, 27.0);
-    ctx.quadraticCurveTo(27.5, 26.2, 32, 28.8);
-    ctx.quadraticCurveTo(36.5, 26.2, 41.5, 27.0);
-    ctx.quadraticCurveTo(38.5, 32.5, 32, 32.5);
-    ctx.quadraticCurveTo(25.5, 32.5, 22.5, 27.0);
-    ctx.closePath();
-    ctx.fill();
-    ctx.stroke();
-  } else if (subType === 'office') {
-    // Toà nhà văn phòng xanh ngọc #14b8a6
-    ctx.fillStyle = '#14b8a6';
-    ctx.strokeStyle = '#115e59';
-    ctx.lineWidth = 1.7;
-    ctx.beginPath();
-    ctx.roundRect(24.2, 14.0, 15.6, 18.8, 2);
-    ctx.fill();
-    ctx.stroke();
-
-    // Ô cửa sổ trắng
+    // Ô biển hiệu nhỏ dưới đỉnh mái
     ctx.fillStyle = '#ffffff';
-    ctx.fillRect(27.0, 17.2, 3.0, 2.6);
-    ctx.fillRect(34.0, 17.2, 3.0, 2.6);
-    ctx.fillRect(27.0, 21.8, 3.0, 2.6);
-    ctx.fillRect(34.0, 21.8, 3.0, 2.6);
-
-    // Cửa chính
-    ctx.fillStyle = '#ccfbf1';
-    ctx.fillRect(29.8, 26.8, 4.4, 5.8);
-  } else if (subType === 'warehouse') {
-    // Nhà kho mái tam giác xanh ngọc #14b8a6
-    ctx.fillStyle = '#14b8a6';
-    ctx.strokeStyle = '#115e59';
-    ctx.lineWidth = 1.7;
-    ctx.lineJoin = 'round';
     ctx.beginPath();
-    ctx.moveTo(22.2, 21.0);
-    ctx.lineTo(32.0, 14.5);
-    ctx.lineTo(41.8, 21.0);
-    ctx.lineTo(41.8, 32.2);
-    ctx.lineTo(22.2, 32.2);
-    ctx.closePath();
+    ctx.roundRect(29.3, 18.4, 5.4, 2.5, 0.7);
     ctx.fill();
-    ctx.stroke();
 
-    // Cửa cuốn kho
-    ctx.fillStyle = '#ccfbf1';
+    // Cửa cuốn kho có rãnh ngang 3D
+    const doorGrad = ctx.createLinearGradient(26, 22.8, 26, 32.4);
+    doorGrad.addColorStop(0, '#f0fdfa');
+    doorGrad.addColorStop(1, '#99f6e4');
+    ctx.fillStyle = doorGrad;
     ctx.strokeStyle = '#115e59';
-    ctx.lineWidth = 1.3;
-    ctx.fillRect(26.2, 23.2, 11.6, 8.8);
-    ctx.strokeRect(26.2, 23.2, 11.6, 8.8);
+    ctx.lineWidth = 1.15;
+    ctx.fillRect(25.8, 22.8, 12.4, 9.6);
+    ctx.strokeRect(25.8, 22.8, 12.4, 9.6);
 
+    ctx.strokeStyle = '#0f766e';
+    ctx.lineWidth = 1.0;
     ctx.beginPath();
-    ctx.moveTo(26.2, 26.2);
-    ctx.lineTo(37.8, 26.2);
-    ctx.moveTo(26.2, 29.2);
-    ctx.lineTo(37.8, 29.2);
+    ctx.moveTo(25.8, 25.8);
+    ctx.lineTo(38.2, 25.8);
+    ctx.moveTo(25.8, 29.0);
+    ctx.lineTo(38.2, 29.0);
     ctx.stroke();
   } else if (subType === 'wash') {
-    // Giọt nước trạm rửa xe / sát khuẩn
-    ctx.fillStyle = '#0ea5e9';
-    ctx.strokeStyle = '#0369a1';
-    ctx.lineWidth = 1.7;
+    // Giọt nước 3D trạm rửa xe / sát khuẩn
+    const dropGrad = ctx.createRadialGradient(29.8, 21.5, 1.0, 32, 23.5, 8.5);
+    dropGrad.addColorStop(0, '#e0f2fe');
+    dropGrad.addColorStop(0.35, '#38bdf8');
+    dropGrad.addColorStop(0.8, '#0284c7');
+    dropGrad.addColorStop(1, '#0369a1');
+    ctx.fillStyle = dropGrad;
+    ctx.strokeStyle = '#075985';
+    ctx.lineWidth = 1.4;
     ctx.beginPath();
-    ctx.moveTo(32, 13.8);
-    ctx.bezierCurveTo(36.5, 19.2, 37.5, 22.5, 37.5, 25.0);
-    ctx.arc(32, 25.0, 5.5, 0, Math.PI, false);
-    ctx.bezierCurveTo(26.5, 22.5, 27.5, 19.2, 32, 13.8);
+    ctx.moveTo(32, 13.0);
+    ctx.bezierCurveTo(37.2, 18.8, 38.2, 22.2, 38.2, 25.0);
+    ctx.arc(32, 25.0, 6.2, 0, Math.PI, false);
+    ctx.bezierCurveTo(25.8, 22.2, 26.8, 18.8, 32, 13.0);
     ctx.closePath();
     ctx.fill();
     ctx.stroke();
 
-    ctx.fillStyle = 'rgba(255,255,255,0.85)';
+    // Vệt bóng sáng hình lưỡi liềm trên giọt nước
+    ctx.fillStyle = 'rgba(255,255,255,0.82)';
     ctx.beginPath();
-    ctx.arc(30.2, 25.2, 1.3, 0, Math.PI * 2);
+    ctx.ellipse(29.5, 24.6, 1.35, 2.3, -0.3, 0, Math.PI * 2);
     ctx.fill();
   } else {
-    // Ngôi nhà trang trại xanh ngọc #14b8a6
-    ctx.fillStyle = '#14b8a6';
+    // Ngôi nhà trang trại 3D xanh ngọc
+    const houseGrad = ctx.createLinearGradient(22, 14, 42, 33);
+    houseGrad.addColorStop(0, '#2dd4bf');
+    houseGrad.addColorStop(0.55, '#14b8a6');
+    houseGrad.addColorStop(1, '#0f766e');
+    ctx.fillStyle = houseGrad;
     ctx.strokeStyle = '#115e59';
-    ctx.lineWidth = 1.7;
+    ctx.lineWidth = 1.4;
     ctx.lineJoin = 'round';
     ctx.beginPath();
-    ctx.moveTo(21.8, 22.4);
-    ctx.lineTo(32.0, 14.2);
-    ctx.lineTo(42.2, 22.4);
-    ctx.lineTo(39.4, 22.4);
-    ctx.lineTo(39.4, 32.0);
-    ctx.lineTo(24.6, 32.0);
-    ctx.lineTo(24.6, 22.4);
+    ctx.moveTo(21.2, 22.2);
+    ctx.lineTo(32.0, 13.6);
+    ctx.lineTo(42.8, 22.2);
+    ctx.lineTo(39.8, 22.2);
+    ctx.lineTo(39.8, 32.4);
+    ctx.lineTo(24.2, 32.4);
+    ctx.lineTo(24.2, 22.2);
     ctx.closePath();
     ctx.fill();
     ctx.stroke();
 
     ctx.fillStyle = '#ccfbf1';
-    ctx.fillRect(28.4, 23.4, 7.2, 8.4);
-    ctx.strokeRect(28.4, 23.4, 7.2, 8.4);
+    ctx.strokeStyle = '#115e59';
+    ctx.lineWidth = 1.1;
+    ctx.fillRect(28.2, 23.4, 7.6, 8.8);
+    ctx.strokeRect(28.2, 23.4, 7.6, 8.8);
+
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(32, 18.6, 1.8, 0, Math.PI * 2);
+    ctx.fill();
   }
   ctx.restore();
 }
 
 /**
- * Tạo trực tiếp HTMLCanvasElement (và trích xuất ImageData đồng bộ 100%)
- * cho icon ghim trang trại / nhà máy bằng các lệnh vẽ Canvas 2D thuần tuý.
- * Không dùng Image.onload nên có dữ liệu tức thì 100%, không bao giờ bị rỗng/trong suốt.
+ * TẠO GHIM ICON 3D CHÂN THỰC SIÊU NÉT 256x256px (HIGH-DPI RETINA, ĐỒNG BỘ 100%)
+ * - Khung logic 64x64 -> render mặc định ở pixelScale = 4 (256x256px vật lý) để sắc nét tuyệt đối trên cả
+ *   Quả địa cầu 3D (Three.js Sprite + Anisotropy) và Bản đồ 2D (MapLibre GL pixelRatio: 4).
+ * - Đỉnh dưới cùng của mũi ghim giọt nước chạm chính xác tại (32, 63.2) để neo toạ độ chuẩn 100%.
  */
 export function createFarmPinCanvasSync(
   subType: FarmSubType | 'hub',
   isSelected = false,
-  pixelScale = 2
+  pixelScale = 4
 ): { canvas: HTMLCanvasElement; imageData: ImageData } {
   const logicalSize = 64;
   const physicalSize = logicalSize * pixelScale;
@@ -661,65 +1044,143 @@ export function createFarmPinCanvasSync(
   }
 
   ctx.clearRect(0, 0, physicalSize, physicalSize);
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
   ctx.save();
   ctx.scale(pixelScale, pixelScale);
 
-  const borderColor =
+  const palette =
     subType === 'chicken'
-      ? '#fb923c'
+      ? {
+          top: '#fdba74',
+          mid: '#f97316',
+          bot: '#c2410c',
+          rim: '#ffffff',
+          halo: '#facc15',
+          dot: '#ea580c',
+        }
       : subType === 'pig'
-      ? '#fb7185'
+      ? {
+          top: '#fda4af',
+          mid: '#f43f5e',
+          bot: '#be123c',
+          rim: '#ffffff',
+          halo: '#facc15',
+          dot: '#e11d48',
+        }
       : subType === 'hub'
-      ? '#2b8fd0'
-      : '#14b8a6';
+      ? {
+          top: '#38bdf8',
+          mid: '#2563eb',
+          bot: '#1e3a8a',
+          rim: '#facc15',
+          halo: '#fde047',
+          dot: '#2563eb',
+        }
+      : {
+          top: '#5eead4',
+          mid: '#14b8a6',
+          bot: '#0f766e',
+          rim: '#ffffff',
+          halo: '#facc15',
+          dot: '#0d9488',
+        };
 
-  // Vòng hào quang vàng cho Nhà máy trung tâm hoặc điểm đang chọn
+  // 1. Vòng hào quang phát sáng cho Nhà Máy Cám hoặc điểm đang được chọn
   if (isSelected || subType === 'hub') {
     ctx.save();
-    ctx.strokeStyle = subType === 'hub' ? '#38bdf8' : '#facc15';
-    ctx.lineWidth = 2.6;
+    const haloGrad = ctx.createRadialGradient(32, 23.8, 17.5, 32, 23.8, 25.0);
+    if (subType === 'hub') {
+      haloGrad.addColorStop(0, 'rgba(250, 204, 21, 0.52)');
+      haloGrad.addColorStop(0.6, 'rgba(56, 189, 248, 0.28)');
+      haloGrad.addColorStop(1, 'rgba(56, 189, 248, 0)');
+    } else {
+      haloGrad.addColorStop(0, 'rgba(250, 204, 21, 0.55)');
+      haloGrad.addColorStop(1, 'rgba(250, 204, 21, 0)');
+    }
+    ctx.fillStyle = haloGrad;
     ctx.beginPath();
-    ctx.arc(32, 24, 22.4, 0, Math.PI * 2);
-    ctx.stroke();
+    ctx.arc(32, 23.8, 24.8, 0, Math.PI * 2);
+    ctx.fill();
     ctx.restore();
   }
 
-  // 1. Mũi ghim tam giác chạm đúng điểm đáy chính giữa (32, 63.6)
+  // 2. Đường bao thân ghim giọt nước 3D chuẩn (đỉnh nhọn tại x=32, y=62.6)
+  const tracePinBody = () => {
+    ctx.beginPath();
+    ctx.moveTo(32, 62.6);
+    ctx.bezierCurveTo(28.5, 53.0, 11.4, 38.6, 11.4, 23.8);
+    ctx.arc(32, 23.8, 20.6, Math.PI, 0, false);
+    ctx.bezierCurveTo(52.6, 38.6, 35.5, 53.0, 32, 62.6);
+    ctx.closePath();
+  };
+
+  // Đổ bóng 3D mềm dưới thân ghim
   ctx.save();
-  ctx.fillStyle = borderColor;
-  ctx.strokeStyle = '#ffffff';
-  ctx.lineWidth = 1.8;
+  ctx.shadowColor = 'rgba(15, 23, 42, 0.34)';
+  ctx.shadowBlur = 3.2;
+  ctx.shadowOffsetX = 0;
+  ctx.shadowOffsetY = 1.6;
+
+  const pinGrad = ctx.createLinearGradient(20, 4, 44, 60);
+  pinGrad.addColorStop(0, palette.top);
+  pinGrad.addColorStop(0.45, palette.mid);
+  pinGrad.addColorStop(1, palette.bot);
+  ctx.fillStyle = pinGrad;
+  tracePinBody();
+  ctx.fill();
+  ctx.restore();
+
+  // Viền ngoài trắng dày sắc nét (hoặc viền vàng kim sang trọng cho Nhà Máy Cám)
+  ctx.save();
+  ctx.strokeStyle = palette.rim;
+  ctx.lineWidth = subType === 'hub' ? 2.6 : 2.2;
   ctx.lineJoin = 'round';
-  ctx.beginPath();
-  ctx.moveTo(23.8, 40.5);
-  ctx.lineTo(32.0, 63.6);
-  ctx.lineTo(40.2, 40.5);
-  ctx.closePath();
-  ctx.fill();
+  tracePinBody();
   ctx.stroke();
   ctx.restore();
 
-  // 2. Vòng tròn nền trắng viền màu nổi bật
+  // Vệt bóng phản chiếu specular 3D ở góc trên trái vành ghim
   ctx.save();
-  ctx.fillStyle = '#ffffff';
-  ctx.strokeStyle = borderColor;
-  ctx.lineWidth = 4.4;
+  tracePinBody();
+  ctx.clip();
+  const shineGrad = ctx.createLinearGradient(14, 5, 36, 26);
+  shineGrad.addColorStop(0, 'rgba(255, 255, 255, 0.52)');
+  shineGrad.addColorStop(0.55, 'rgba(255, 255, 255, 0.08)');
+  shineGrad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+  ctx.fillStyle = shineGrad;
   ctx.beginPath();
-  ctx.arc(32, 24, 19.6, 0, Math.PI * 2);
+  ctx.ellipse(24.5, 11.5, 15.5, 8.5, -0.45, 0, Math.PI * 2);
   ctx.fill();
+  ctx.restore();
+
+  // 3. Khoang tròn trắng ngọc trai bên trong (lõm nhẹ 3D để tôn biểu tượng)
+  ctx.save();
+  const innerBgGrad = ctx.createRadialGradient(29, 19.5, 1.5, 32, 23.8, 16.2);
+  innerBgGrad.addColorStop(0, '#ffffff');
+  innerBgGrad.addColorStop(0.84, '#f8fafc');
+  innerBgGrad.addColorStop(1, '#e2e8f0');
+  ctx.fillStyle = innerBgGrad;
+  ctx.beginPath();
+  ctx.arc(32, 23.8, 15.6, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.strokeStyle =
+    subType === 'hub' ? 'rgba(250, 204, 21, 0.85)' : 'rgba(255, 255, 255, 0.9)';
+  ctx.lineWidth = 1.2;
   ctx.stroke();
   ctx.restore();
 
-  // 3. Biểu tượng bên trong (Gà / Heo / Nhà máy / Văn phòng / Kho / Rửa xe / Khác)
+  // 4. Vẽ biểu tượng 3D siêu nét bên trong khoang tròn
   drawInnerPictogram2D(ctx, subType);
 
-  // 4. Chấm tâm nhỏ ngay đúng đỉnh mũi ghim (32, 62.8)
+  // 5. Chấm neo nhỏ gọn ngay đúng đỉnh mũi ghim (32, 62.4)
   ctx.save();
   ctx.fillStyle = '#ffffff';
-  ctx.strokeStyle = borderColor;
-  ctx.lineWidth = 1.3;
+  ctx.strokeStyle = palette.dot;
+  ctx.lineWidth = 1.1;
   ctx.beginPath();
-  ctx.arc(32, 62.8, 1.8, 0, Math.PI * 2);
+  ctx.arc(32, 62.4, 1.45, 0, Math.PI * 2);
   ctx.fill();
   ctx.stroke();
   ctx.restore();
@@ -732,7 +1193,7 @@ export function createFarmPinCanvasSync(
 
 /**
  * Tạo texture chấm tròn phát sáng (glowing particle) đồng bộ bằng Canvas 2D
- * dùng cho luồng chấm sáng cung ứng chạy một chiều từ Nhà máy -> Trại Gà / Trại Heo
+ * dùng cho luồng chấm sáng cung ứng chạy một chiều từ Nhà Máy Cám -> Trại Gà / Trại Heo
  */
 export function createGlowParticleImageDataSync(
   coreColor = '#fef08a',
@@ -779,17 +1240,21 @@ const MARKER_ALIAS_MAP: Record<string, FarmSubType | 'hub'> = {
   'marker-factory': 'hub',
 };
 
+const MAPLIBRE_ICON_PIXEL_SCALE = 4; // 64x64 logic * 4 = 256x256px Retina siêu nét
+
 /**
- * Đăng ký ĐỒNG BỘ 100% một ảnh icon vào MapLibre GL (tức thì, không bất đồng bộ)
- * Hỗ trợ cả tên 'marker-chicken' / 'marker-pig' / 'marker-other' / 'marker-factory'
- * lẫn 'farm-icon-chicken' / 'farm-icon-pig' / 'farm-icon-other' / 'farm-icon-hub' / ...
+ * Đăng ký ĐỒNG BỘ 100% một ảnh icon 256x256px (pixelRatio: 4) vào MapLibre GL
  */
 export function addSingleFarmIconToMap(
   map: maplibregl.Map,
-  imageId: string
+  imageId: string,
+  forceReplace = false
 ): void {
   try {
-    if (map.hasImage(imageId)) return;
+    if (map.hasImage(imageId)) {
+      if (!forceReplace) return;
+      map.removeImage(imageId);
+    }
 
     if (imageId === 'supply-particle-chicken') {
       const imgData = createGlowParticleImageDataSync('#fef08a', '#fb923c', 64);
@@ -805,8 +1270,14 @@ export function addSingleFarmIconToMap(
 
     if (imageId in MARKER_ALIAS_MAP) {
       const st = MARKER_ALIAS_MAP[imageId];
-      const { imageData } = createFarmPinCanvasSync(st, st === 'hub', 2);
-      map.addImage(imageId, imageData, { pixelRatio: 2 });
+      const { imageData } = createFarmPinCanvasSync(
+        st,
+        st === 'hub',
+        MAPLIBRE_ICON_PIXEL_SCALE
+      );
+      map.addImage(imageId, imageData, {
+        pixelRatio: MAPLIBRE_ICON_PIXEL_SCALE,
+      });
       return;
     }
 
@@ -816,16 +1287,29 @@ export function addSingleFarmIconToMap(
       ? rawType
       : 'other';
 
-    const { imageData } = createFarmPinCanvasSync(st, st === 'hub', 2);
-    map.addImage(imageId, imageData, { pixelRatio: 2 });
+    const { imageData } = createFarmPinCanvasSync(
+      st,
+      st === 'hub',
+      MAPLIBRE_ICON_PIXEL_SCALE
+    );
+    map.addImage(imageId, imageData, {
+      pixelRatio: MAPLIBRE_ICON_PIXEL_SCALE,
+    });
   } catch {
     // Bỏ qua an toàn nếu bản đồ đang chuyển style
   }
 }
 
 /**
- * Đăng ký ĐỒNG BỘ toàn bộ bộ ảnh icon + hạt phát sáng vào MapLibre GL ngay lập tức
- * khi `map.on('load')` và `map.on('style.load')`.
+ * Cập nhật nóng lại icon Nhà Máy Cám (farm-icon-hub) trên MapLibre GL ngay khi ảnh /logo.png tải xong
+ */
+export function refreshHubIconOnMap(map: maplibregl.Map): void {
+  addSingleFarmIconToMap(map, 'farm-icon-hub', true);
+  addSingleFarmIconToMap(map, 'marker-factory', true);
+}
+
+/**
+ * Đăng ký ĐỒNG BỘ toàn bộ bộ ảnh icon 256x256px + hạt phát sáng vào MapLibre GL ngay lập tức
  */
 export function registerMapLibreFarmIcons(map: maplibregl.Map): void {
   for (const st of VALID_SUBTYPES) {
@@ -852,13 +1336,13 @@ export interface DropdownLocationItem {
 
 /**
  * Xác định nhóm ưu tiên (1 -> 7) cho danh sách xổ xuống "Tất cả địa điểm":
- * 1. Trụ sở chính Công ty Thái Việt Corporation (tên chứa "tru so" / "cong ty" / "thai viet corporation")
- * 2. Văn phòng miền Nam (tên chứa "van phong mien nam" / "vp mien nam", sau đó đến các văn phòng khác)
- * 3. Nhà máy trung tâm (Nhà máy trung tâm Thái Việt — luôn nằm ở nhóm đầu để dễ bấm kích hoạt luồng độ phủ)
- * 4. Kho heo trung tâm (tên chứa "kho heo trung tam", sau đó đến các kho khác)
- * 5. Các trại heo (toàn bộ trại thuộc nhóm heo)
- * 6. Các trại gà (toàn bộ trại thuộc nhóm gà)
- * 7. Các điểm còn lại & cuối cùng là các điểm rửa xe ("rua xe" / "diem rua" / "tram rua" / "sat khuan")
+ * 1. Trụ sở chính Công ty Thái Việt Corporation
+ * 2. Văn phòng miền Nam -> các văn phòng khác
+ * 3. Nhà Máy Cám (điểm thật từ Google My Maps — tâm phát đốm sáng cung ứng)
+ * 4. Kho heo trung tâm -> các kho khác
+ * 5. Các trại heo
+ * 6. Các trại gà
+ * 7. Các điểm khác & cuối cùng là các điểm rửa xe
  */
 function getDropdownPriorityRank(item: DropdownLocationItem): {
   group: number;
@@ -869,12 +1353,18 @@ function getDropdownPriorityRank(item: DropdownLocationItem): {
   const normAll = normalizeMatchText(`${item.type || ''} ${item.name || ''}`);
   const paddedAll = ` ${normAll} `;
 
-  // 3. Nhà máy trung tâm Thái Việt (isHub === true)
-  if (item.isHub || item.category === 'hub') {
+  // 3. Nhà Máy Cám (điểm thật từ My Maps)
+  if (
+    item.isHub ||
+    item.category === 'hub' ||
+    item.subType === 'hub' ||
+    normAll.includes('nha may cam') ||
+    normName.includes('nha may')
+  ) {
     return {
       group: 3,
-      subRank: 0,
-      groupLabel: 'Nhà máy trung tâm',
+      subRank: normAll.includes('nha may cam') ? 0 : 1,
+      groupLabel: 'Nhà máy cám',
     };
   }
 
@@ -885,6 +1375,7 @@ function getDropdownPriorityRank(item: DropdownLocationItem): {
     normAll.includes('diem rua') ||
     normAll.includes('tram rua') ||
     normAll.includes('sat khuan') ||
+    normAll.includes('sat trung') ||
     normAll.includes('khu trung');
 
   if (isWashPoint) {
@@ -898,8 +1389,8 @@ function getDropdownPriorityRank(item: DropdownLocationItem): {
   // 1. Trụ sở chính Công ty Thái Việt Corporation
   if (
     normAll.includes('tru so') ||
-    normName.includes('cong ty') ||
-    normName.includes('thai viet corporation')
+    normName.includes('thai viet corporation') ||
+    (normName.includes('cong ty') && !normName.includes('van phong'))
   ) {
     return {
       group: 1,
@@ -925,15 +1416,6 @@ function getDropdownPriorityRank(item: DropdownLocationItem): {
       group: 2,
       subRank: isSouthOffice ? 0 : 1,
       groupLabel: 'Trụ sở chính & Văn phòng',
-    };
-  }
-
-  // Nếu là điểm nhà máy khác trong dữ liệu KML
-  if (normAll.includes('nha may trung tam') || normName.includes('nha may')) {
-    return {
-      group: 3,
-      subRank: 1,
-      groupLabel: 'Nhà máy trung tâm',
     };
   }
 

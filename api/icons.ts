@@ -10,6 +10,7 @@
  */
 
 const REDIS_HASH_KEY = 'farm_icons';
+const REDIS_LABELS_HASH_KEY = 'farm_labels';
 const FARM_KEY_REGEX = /^-?\d{1,2}\.\d{5},-?\d{1,3}\.\d{5}$/;
 
 function getRedisCredentials() {
@@ -32,7 +33,7 @@ export default async function handler(req: any, res: any) {
   const { url: redisUrl, token: redisToken } = getRedisCredentials();
   const adminPassword = (process.env.ADMIN_PASSWORD || 'admintvc').trim();
 
-  // 1. GET /api/icons -> Đọc toàn bộ hash "farm_icons" từ Upstash Redis
+  // 1. GET /api/icons -> Đọc đồng thời hash "farm_icons" và "farm_labels" từ Upstash Redis
   if (req.method === 'GET') {
     if (!redisUrl || !redisToken) {
       res.status(503).json({
@@ -44,25 +45,34 @@ export default async function handler(req: any, res: any) {
     }
 
     try {
-      const response = await fetch(
-        `${redisUrl}/hgetall/${encodeURIComponent(REDIS_HASH_KEY)}`,
-        {
+      const [iconsRes, labelsRes] = await Promise.all([
+        fetch(`${redisUrl}/hgetall/${encodeURIComponent(REDIS_HASH_KEY)}`, {
           method: 'GET',
           headers: {
             Authorization: `Bearer ${redisToken}`,
             Accept: 'application/json',
           },
-        }
-      );
+        }),
+        fetch(
+          `${redisUrl}/hgetall/${encodeURIComponent(REDIS_LABELS_HASH_KEY)}`,
+          {
+            method: 'GET',
+            headers: {
+              Authorization: `Bearer ${redisToken}`,
+              Accept: 'application/json',
+            },
+          }
+        ),
+      ]);
 
-      if (!response.ok) {
-        res.status(response.status).json({
-          error: `Upstash Redis trả về mã lỗi ${response.status}.`,
+      if (!iconsRes.ok) {
+        res.status(iconsRes.status).json({
+          error: `Upstash Redis trả về mã lỗi ${iconsRes.status}.`,
         });
         return;
       }
 
-      const data = await response.json();
+      const data = await iconsRes.json();
       const rawArray: unknown = data?.result;
 
       const items: Array<{ farm_key: string; icon: 'chicken' | 'pig' }> = [];
@@ -79,11 +89,26 @@ export default async function handler(req: any, res: any) {
         }
       }
 
+      const customLabels: Record<string, string> = {};
+      if (labelsRes.ok) {
+        const labelsData = await labelsRes.json();
+        const rawLabels: unknown = labelsData?.result;
+        if (Array.isArray(rawLabels)) {
+          for (let i = 0; i < rawLabels.length; i += 2) {
+            const field = String(rawLabels[i] || '').trim();
+            const val = String(rawLabels[i + 1] || '').trim();
+            if (field && val) {
+              customLabels[field] = val;
+            }
+          }
+        }
+      }
+
       res.setHeader(
         'Cache-Control',
-        's-maxage=30, stale-while-revalidate=120'
+        'no-store, no-cache, must-revalidate, proxy-revalidate'
       );
-      res.status(200).json({ ok: true, icons: iconsMap, items });
+      res.status(200).json({ ok: true, icons: iconsMap, items, customLabels });
       return;
     } catch (err) {
       res.status(500).json({
@@ -96,7 +121,7 @@ export default async function handler(req: any, res: any) {
     }
   }
 
-  // 2. POST /api/icons (bao gồm ?action=login và lưu lựa chọn icon)
+  // 2. POST /api/icons (bao gồm ?action=login, lưu lựa chọn icon và lưu nhãn mô tả customLabels)
   if (req.method === 'POST') {
     const providedPassword = String(
       req.headers?.['x-admin-password'] || ''
@@ -136,8 +161,8 @@ export default async function handler(req: any, res: any) {
       }
     }
 
-    // Chuẩn hoá danh sách mục cần lưu: hỗ trợ { farm_key, icon }, { key, icon } hoặc { items: [...] }
-    const rawItems: Array<{
+    // Chuẩn hoá danh sách mục icon cần lưu
+    const rawIconItems: Array<{
       farm_key?: unknown;
       key?: unknown;
       icon?: unknown;
@@ -145,28 +170,44 @@ export default async function handler(req: any, res: any) {
       ? body.items
       : body &&
         typeof body === 'object' &&
-        ('farm_key' in body || 'key' in body)
+        ('farm_key' in body || 'key' in body) &&
+        'icon' in body
       ? [body]
       : [];
 
-    if (rawItems.length === 0) {
+    // Chuẩn hoá danh sách mục nhãn mô tả (customLabels) cần lưu
+    const rawLabelItems: Array<{
+      farm_key?: unknown;
+      key?: unknown;
+      label?: unknown;
+    }> = Array.isArray(body?.labelItems)
+      ? body.labelItems
+      : body &&
+        typeof body === 'object' &&
+        ('farm_key' in body || 'key' in body) &&
+        'label' in body
+      ? [body]
+      : [];
+
+    if (rawIconItems.length === 0 && rawLabelItems.length === 0) {
       res.status(400).json({
-        error: 'Thiếu dữ liệu { farm_key, icon } hoặc { items: [...] }.',
+        error:
+          'Thiếu dữ liệu { farm_key, icon }, { farm_key, label }, { items: [...] } hoặc { labelItems: [...] }.',
       });
       return;
     }
 
-    if (rawItems.length > 500) {
+    if (rawIconItems.length > 500 || rawLabelItems.length > 500) {
       res.status(400).json({
         error: 'Số lượng mục cập nhật tối đa trong một lần là 500.',
       });
       return;
     }
 
-    const hsetArgs: string[] = [];
-    const hdelArgs: string[] = [];
+    const iconHsetArgs: string[] = [];
+    const iconHdelArgs: string[] = [];
 
-    for (const item of rawItems) {
+    for (const item of rawIconItems) {
       const farmKey = String(item?.farm_key || item?.key || '').trim();
       const icon = String(item?.icon || '').trim();
 
@@ -185,49 +226,70 @@ export default async function handler(req: any, res: any) {
       }
 
       if (icon === 'auto') {
-        hdelArgs.push(farmKey);
+        iconHdelArgs.push(farmKey);
       } else {
-        hsetArgs.push(farmKey, icon);
+        iconHsetArgs.push(farmKey, icon);
+      }
+    }
+
+    const labelHsetArgs: string[] = [];
+    const labelHdelArgs: string[] = [];
+
+    for (const item of rawLabelItems) {
+      const farmKey = String(item?.farm_key || item?.key || '').trim();
+      const rawLabel =
+        item?.label === null || item?.label === undefined
+          ? ''
+          : String(item.label).trim();
+
+      if (!FARM_KEY_REGEX.test(farmKey)) {
+        res.status(400).json({
+          error: `Định dạng farm_key "${farmKey}" không hợp lệ.`,
+        });
+        return;
+      }
+
+      if (!rawLabel || rawLabel.toLowerCase() === 'auto') {
+        labelHdelArgs.push(farmKey);
+      } else {
+        labelHsetArgs.push(farmKey, rawLabel.slice(0, 60));
       }
     }
 
     try {
-      // Thực thi lệnh HSET cho các mục "chicken" / "pig"
-      if (hsetArgs.length > 0) {
-        const hsetRes = await fetch(redisUrl, {
+      const execRedisCmd = async (cmd: string[]) => {
+        const r = await fetch(redisUrl, {
           method: 'POST',
           headers: {
             Authorization: `Bearer ${redisToken}`,
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify(['HSET', REDIS_HASH_KEY, ...hsetArgs]),
+          body: JSON.stringify(cmd),
         });
-
-        if (!hsetRes.ok) {
-          throw new Error(`Upstash HSET lỗi mã ${hsetRes.status}`);
+        if (!r.ok) {
+          throw new Error(`Upstash ${cmd[0]} lỗi mã ${r.status}`);
         }
+      };
+
+      if (iconHsetArgs.length > 0) {
+        await execRedisCmd(['HSET', REDIS_HASH_KEY, ...iconHsetArgs]);
       }
-
-      // Thực thi lệnh HDEL cho các mục đặt về "auto"
-      if (hdelArgs.length > 0) {
-        const hdelRes = await fetch(redisUrl, {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${redisToken}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(['HDEL', REDIS_HASH_KEY, ...hdelArgs]),
-        });
-
-        if (!hdelRes.ok) {
-          throw new Error(`Upstash HDEL lỗi mã ${hdelRes.status}`);
-        }
+      if (iconHdelArgs.length > 0) {
+        await execRedisCmd(['HDEL', REDIS_HASH_KEY, ...iconHdelArgs]);
+      }
+      if (labelHsetArgs.length > 0) {
+        await execRedisCmd(['HSET', REDIS_LABELS_HASH_KEY, ...labelHsetArgs]);
+      }
+      if (labelHdelArgs.length > 0) {
+        await execRedisCmd(['HDEL', REDIS_LABELS_HASH_KEY, ...labelHdelArgs]);
       }
 
       res.status(200).json({
         ok: true,
-        updated: hsetArgs.length / 2,
-        deleted: hdelArgs.length,
+        updated: iconHsetArgs.length / 2,
+        deleted: iconHdelArgs.length,
+        labelsUpdated: labelHsetArgs.length / 2,
+        labelsDeleted: labelHdelArgs.length,
       });
       return;
     } catch (err) {

@@ -1,4 +1,4 @@
-import { CentralHub, FarmCategory, FarmStatus, TimeOfDay } from './types';
+import { FarmCategory, FarmStatus, TimeOfDay } from './types';
 
 /**
  * FILE CẤU HÌNH HỆ THỐNG TRANG TRẠI (src/config.ts)
@@ -7,6 +7,17 @@ import { CentralHub, FarmCategory, FarmStatus, TimeOfDay } from './types';
  * Bảng màu giao diện sáng: kính trắng mờ rgba(255,255,255,0.75), chữ #0f2a24,
  * xanh lá #10b981, xanh trời #0ea5e9, vàng nắng #facc15, san hô #fb7185, cam #fb923c.
  */
+export const PRESET_LOCATION_LABELS: string[] = [
+  'Trụ sở chính',
+  'Văn phòng',
+  'Nhà máy cám',
+  'Kho trung tâm',
+  'Trại heo',
+  'Trại gà',
+  'Điểm rửa xe',
+  'Khác',
+];
+
 export const APP_CONFIG = {
   companyName: 'Công Ty Cổ Phần Thái Việt Corporation',
   documentTitle: 'Thái Việt Corporation - Hệ Thống Trang Trại 3D',
@@ -15,15 +26,6 @@ export const APP_CONFIG = {
 
   // Đường dẫn logo chính thức trong thư mục public/logo.png
   logoUrl: '/logo.png',
-
-  // Toạ độ Nhà máy Trung tâm mặc định (Điểm gốc của các đường cung dữ liệu ArcLayer)
-  centralHub: {
-    name: 'NHÀ MÁY TRUNG TÂM THÁI VIỆT',
-    subtitle: 'Tổ hợp Chế biến, Thức ăn & Điều phối Sinh học Trung tâm Thái Việt Corporation',
-    lat: 10.9654,
-    lng: 107.0128,
-    address: 'Khu Công nghiệp Công nghệ cao Long Thành - Trảng Bom, Đồng Nai, Việt Nam',
-  } as CentralHub,
 
   // Bán kính an toàn sinh học mặc định (đơn vị: mét)
   defaultBiosecurityRadiusMeters: 500,
@@ -145,12 +147,12 @@ export const APP_CONFIG = {
 
   // Khoá lưu trữ dữ liệu trong localStorage & sessionStorage
   storageKey: 'thaiviet_corp_farms_v1',
-  hubStorageKey: 'thaiviet_corp_hub_v1',
   lastSyncStorageKey: 'thaiviet_corp_last_sync_v1',
   myMapsIdStorageKey: 'thaiviet_corp_mymaps_id_v1',
   myMapsLinkStorageKey: 'thaiviet_corp_mymaps_link_v1',
   customLogoStorageKey: 'thaiviet_corp_custom_logo_v1',
   iconOverridesStorageKey: 'thaiviet_corp_icon_overrides_v1',
+  customLabelsStorageKey: 'thaiviet_corp_custom_labels_v1',
   adminSessionStorageKey: 'thaiviet_corp_admin_session_v1',
   userPrefsStorageKey: 'thaiviet_corp_user_prefs_v1',
 

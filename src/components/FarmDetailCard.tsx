@@ -11,16 +11,33 @@ import {
   Lock,
   MapPin,
   Navigation,
+  Pencil,
   Radio,
+  RotateCcw,
   ShieldAlert,
   ShieldCheck,
   Sparkles,
   X,
 } from 'lucide-react';
-import { APP_CONFIG, getCategoryConfig } from '../config';
-import { CentralHub, Farm, FarmCategory, IconChoice } from '../types';
+import {
+  APP_CONFIG,
+  getCategoryConfig,
+  PRESET_LOCATION_LABELS,
+} from '../config';
+import {
+  CentralHub,
+  Farm,
+  FarmCategory,
+  FarmCustomLabels,
+  IconChoice,
+} from '../types';
 import { calculateDistanceKm } from '../utils/geo';
-import { resolveFarmIconType } from '../utils/icons';
+import {
+  getDefaultLocationLabel,
+  getFarmKey,
+  getLocationDisplayLabel,
+  resolveFarmIconType,
+} from '../utils/icons';
 import { CountUp } from './CountUp';
 import { CuteCategoryIcon, PanelParticles } from './CursorSpotlight';
 
@@ -28,7 +45,8 @@ export type MobileSheetSnap = 'collapsed' | 'half' | 'full';
 
 interface FarmDetailCardProps {
   farm: Farm;
-  centralHub: CentralHub;
+  centralHub: CentralHub | null;
+  customLabels?: FarmCustomLabels;
   biosecurityRadius: number;
   logoUrl: string;
   onClose: () => void;
@@ -37,6 +55,7 @@ interface FarmDetailCardProps {
   liteMode?: boolean;
   isAdmin?: boolean;
   onSelectFarmIcon?: (farm: Farm, choice: IconChoice) => Promise<void>;
+  onSaveCustomLabel?: (farm: Farm, label: string) => Promise<void>;
   isSingleArcActive?: boolean;
   onToggleSingleArc?: () => void;
   mobileSheetSnap?: MobileSheetSnap;
@@ -76,28 +95,16 @@ function useDeviceCardMode() {
   return mode;
 }
 
-function getSubTypeLabel(farm: Farm, fallbackLabel: string): string {
-  if (farm.category === 'chicken' || farm.category === 'pig') {
-    return fallbackLabel;
-  }
-  if (farm.subType === 'office') return 'Văn phòng / Điều hành';
-  if (farm.subType === 'warehouse') return 'Kho vận / Lưu trữ';
-  if (farm.subType === 'wash') return 'Trạm rửa xe / Sát trùng';
-  return fallbackLabel;
-}
-
 /**
  * CARD THÔNG TIN TRANG TRẠI (KÍNH TRẮNG MỜ TƯƠI SÁNG + ĐÁP ỨNG ĐA THIẾT BỊ)
+ * - Hiển thị nhãn mô tả (nhãn tùy chỉnh của Admin từ Upstash Redis hoặc tự động thông minh) kèm nút "Sửa mô tả" cho Quản trị viên.
  * - Hiển thị toạ độ đầy đủ 6 chữ số thập phân kèm nút Copy.
- * - Nếu là trang trại chăn nuôi kết nối được (isConnectable = true), có nút "Hiện đường từ nhà máy" để bật đường cung đơn lẻ.
- * - Trên điện thoại dọc (< 640px): Bottom-sheet 3 nấc (28% / 55% / 90%), luôn thấy nút Đóng (X) và nút Chỉ đường Google Maps.
- * - Trên điện thoại ngang (height < 500px): Đặt bên phải rộng 320px, cuộn dọc bên trong.
- * - Trên iPad dọc: Bottom-sheet tối đa 60% chiều cao.
- * - Trên Laptop / iPad ngang: Đặt bên phải rộng clamp(320px, 28vw, 420px), cao tối đa calc(100dvh - 32px).
+ * - Nếu là trang trại chăn nuôi kết nối được (isConnectable = true), có nút "Hiện đường từ Nhà Máy Cám" để bật đường cung đơn lẻ.
  */
 export const FarmDetailCard: React.FC<FarmDetailCardProps> = ({
   farm,
   centralHub,
+  customLabels,
   biosecurityRadius,
   logoUrl,
   onClose,
@@ -106,6 +113,7 @@ export const FarmDetailCard: React.FC<FarmDetailCardProps> = ({
   liteMode = false,
   isAdmin = false,
   onSelectFarmIcon,
+  onSaveCustomLabel,
   isSingleArcActive = false,
   onToggleSingleArc,
   mobileSheetSnap = 'half',
@@ -117,22 +125,35 @@ export const FarmDetailCard: React.FC<FarmDetailCardProps> = ({
   const [logoError, setLogoError] = useState(false);
   const [isSavingIcon, setIsSavingIcon] = useState(false);
 
+  const [isEditingLabel, setIsEditingLabel] = useState(false);
+  const [labelInput, setLabelInput] = useState('');
+  const [isSavingLabel, setIsSavingLabel] = useState(false);
+
   const deviceMode = useDeviceCardMode();
 
   const categoryCfg = getCategoryConfig(farm.category);
   const displayIconKey =
-    farm.category === 'other' && farm.subType ? farm.subType : farm.category;
-  const displayCategoryLabel = getSubTypeLabel(farm, categoryCfg.label);
+    farm.subType === 'hub'
+      ? 'hub'
+      : farm.category === 'other' && farm.subType
+      ? farm.subType
+      : farm.category;
+  const farmKey = farm.farmKey || getFarmKey(farm.lat, farm.lng);
+  const hasCustomLabel = Boolean(customLabels?.[farmKey]?.trim());
+  const defaultAutoLabel = getDefaultLocationLabel(farm);
+  const displayCategoryLabel = getLocationDisplayLabel(farm, customLabels);
+
+  useEffect(() => {
+    setIsEditingLabel(false);
+    setLabelInput(displayCategoryLabel);
+  }, [farm.id, displayCategoryLabel]);
 
   const statusCfg =
     APP_CONFIG.colors.statuses[farm.status] ||
     APP_CONFIG.colors.statuses.active;
-  const distanceKm = calculateDistanceKm(
-    centralHub.lat,
-    centralHub.lng,
-    farm.lat,
-    farm.lng
-  );
+  const distanceKm = centralHub
+    ? calculateDistanceKm(centralHub.lat, centralHub.lng, farm.lat, farm.lng)
+    : null;
 
   const currentManualChoice: IconChoice = farm.manualIcon || 'auto';
   const autoCategory = resolveFarmIconType(farm, {});
@@ -144,6 +165,17 @@ export const FarmDetailCard: React.FC<FarmDetailCardProps> = ({
       await onSelectFarmIcon(farm, choice);
     } finally {
       setIsSavingIcon(false);
+    }
+  };
+
+  const handleCommitLabel = async (nextValue: string) => {
+    if (!onSaveCustomLabel || isSavingLabel) return;
+    setIsSavingLabel(true);
+    try {
+      await onSaveCustomLabel(farm, nextValue.trim());
+      setIsEditingLabel(false);
+    } finally {
+      setIsSavingLabel(false);
     }
   };
 
@@ -203,7 +235,9 @@ export const FarmDetailCard: React.FC<FarmDetailCardProps> = ({
       .catch(() => {});
   };
 
-  const googleMapsDirectionsUrl = `https://www.google.com/maps/dir/?api=1&origin=${centralHub.lat},${centralHub.lng}&destination=${farm.lat},${farm.lng}&travelmode=driving`;
+  const googleMapsDirectionsUrl = centralHub
+    ? `https://www.google.com/maps/dir/?api=1&origin=${centralHub.lat},${centralHub.lng}&destination=${farm.lat},${farm.lng}&travelmode=driving`
+    : `https://www.google.com/maps/dir/?api=1&destination=${farm.lat},${farm.lng}&travelmode=driving`;
 
   const extendedEntries = farm.extendedData
     ? Object.entries(farm.extendedData).filter(
@@ -338,8 +372,22 @@ export const FarmDetailCard: React.FC<FarmDetailCardProps> = ({
                   category={displayIconKey}
                   className="h-4 w-4"
                 />
-                {displayCategoryLabel}
+                <span>{displayCategoryLabel}</span>
               </span>
+              {isAdmin && onSaveCustomLabel && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLabelInput(displayCategoryLabel);
+                    setIsEditingLabel((prev) => !prev);
+                  }}
+                  title="Sửa nhãn mô tả phân loại"
+                  className="inline-flex items-center gap-1 rounded-full border border-[#2b8fd0]/30 bg-[#2b8fd0]/10 px-2 py-0.5 text-[10px] font-extrabold text-[#2b8fd0] transition-colors hover:bg-[#2b8fd0] hover:text-white cursor-pointer"
+                >
+                  <Pencil className="h-2.5 w-2.5" />
+                  <span>Sửa mô tả</span>
+                </button>
+              )}
               <span aria-hidden="true" className="text-emerald-950/30">
                 ·
               </span>
@@ -419,6 +467,76 @@ export const FarmDetailCard: React.FC<FarmDetailCardProps> = ({
               )}
             </div>
           </div>
+
+          {/* Bộ chỉnh sửa Nhãn mô tả inline cho Quản trị viên */}
+          {isAdmin && onSaveCustomLabel && isEditingLabel && (
+            <div className="mt-2.5 rounded-2xl border border-[#2b8fd0]/30 bg-sky-50/85 p-2.5 text-xs">
+              <div className="mb-1.5 flex items-center justify-between text-[10px] font-extrabold tracking-wide text-[#2b8fd0] uppercase">
+                <span>Chỉnh sửa nhãn mô tả (Lưu cho mọi người)</span>
+                {hasCustomLabel && (
+                  <button
+                    type="button"
+                    disabled={isSavingLabel}
+                    onClick={() => handleCommitLabel('')}
+                    className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-950/70 hover:text-[#d9261c] cursor-pointer"
+                  >
+                    <RotateCcw className="h-2.5 w-2.5" />
+                    <span>Mặc định ({defaultAutoLabel})</span>
+                  </button>
+                )}
+              </div>
+
+              <div className="mb-2 flex flex-wrap gap-1">
+                {PRESET_LOCATION_LABELS.map((preset) => (
+                  <button
+                    key={preset}
+                    type="button"
+                    disabled={isSavingLabel}
+                    onClick={() => setLabelInput(preset)}
+                    className={`rounded-full px-2 py-0.5 text-[10px] font-bold transition-colors cursor-pointer ${
+                      labelInput.trim() === preset
+                        ? 'bg-[#2b8fd0] text-white'
+                        : 'border border-emerald-950/15 bg-white text-[#0f2a24] hover:border-[#2b8fd0]'
+                    }`}
+                  >
+                    {preset}
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="text"
+                  value={labelInput}
+                  maxLength={60}
+                  onChange={(e) => setLabelInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleCommitLabel(labelInput);
+                    }
+                  }}
+                  placeholder="Nhập nhãn mô tả tùy chỉnh..."
+                  className="min-w-0 flex-1 rounded-xl border border-[#2b8fd0]/35 bg-white px-2.5 py-1.5 text-xs font-semibold text-[#0f2a24] focus:border-[#2b8fd0] focus:outline-none"
+                />
+                <button
+                  type="button"
+                  disabled={isSavingLabel}
+                  onClick={() => handleCommitLabel(labelInput)}
+                  className="shrink-0 rounded-xl bg-[#2b8fd0] px-3 py-1.5 text-xs font-extrabold text-white shadow-xs hover:bg-[#1e74ad] disabled:opacity-60 cursor-pointer"
+                >
+                  {isSavingLabel ? '...' : 'Lưu'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsEditingLabel(false)}
+                  className="shrink-0 rounded-xl border border-emerald-950/15 bg-white px-2 py-1.5 text-xs font-bold text-[#0f2a24] hover:bg-emerald-950/5 cursor-pointer"
+                >
+                  Huỷ
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* PHẦN NỘI DUNG CUỘN DỌC BÊN TRONG (Ẩn khi ở nấc thu gọn 28% trên mobile dọc) */}
@@ -519,10 +637,14 @@ export const FarmDetailCard: React.FC<FarmDetailCardProps> = ({
                     category="hub"
                     className="h-3.5 w-3.5 text-[#2b8fd0]"
                   />
-                  <span>Cách nhà máy trung tâm</span>
+                  <span>Cách {centralHub?.name || 'Nhà Máy Cám'}</span>
                 </div>
                 <div className="text-base font-extrabold text-[#2b8fd0] sm:text-lg">
-                  <CountUp end={distanceKm} decimals={2} suffix=" km" />
+                  {distanceKm !== null ? (
+                    <CountUp end={distanceKm} decimals={2} suffix=" km" />
+                  ) : (
+                    <span>—</span>
+                  )}
                 </div>
               </div>
 
@@ -599,7 +721,7 @@ export const FarmDetailCard: React.FC<FarmDetailCardProps> = ({
         {/* FOOTER CỐ ĐỊNH: Nút "Hiện đường từ nhà máy" (cho trại gà/heo kết nối được) + Nút "CHỈ ĐƯỜNG GOOGLE MAPS" */}
         <div className="relative z-10 shrink-0 border-t border-emerald-950/10 bg-white/75 px-4 py-3 sm:px-5">
           <div className="flex flex-col gap-2">
-            {farm.isConnectable && onToggleSingleArc && (
+            {farm.isConnectable && centralHub && onToggleSingleArc && (
               <button
                 type="button"
                 onClick={onToggleSingleArc}
@@ -612,8 +734,8 @@ export const FarmDetailCard: React.FC<FarmDetailCardProps> = ({
                 <GitCommitHorizontal className="h-4 w-4" />
                 <span>
                   {isSingleArcActive
-                    ? 'Ẩn đường kết nối từ nhà máy'
-                    : 'Hiện đường từ nhà máy'}
+                    ? `Ẩn đường kết nối từ ${centralHub.name}`
+                    : `Hiện đường từ ${centralHub.name}`}
                 </span>
               </button>
             )}
@@ -652,39 +774,67 @@ export const FarmDetailCard: React.FC<FarmDetailCardProps> = ({
 
 interface HubDetailCardProps {
   centralHub: CentralHub;
+  feedMillFarm?: Farm | null;
+  customLabels?: FarmCustomLabels;
   farms: Farm[];
   activeCategories: Record<FarmCategory, boolean>;
   logoUrl: string;
   onClose: () => void;
   onSelectFarm: (farm: Farm) => void;
   liteMode?: boolean;
+  isAdmin?: boolean;
+  onSaveCustomLabel?: (farm: Farm, label: string) => Promise<void>;
   mobileSheetSnap?: MobileSheetSnap;
   onChangeMobileSheetSnap?: (snap: MobileSheetSnap) => void;
 }
 
 /**
- * CARD THÔNG TIN NHÀ MÁY TRUNG TÂM THÁI VIỆT (KHI BẤM VÀO ICON NHÀ MÁY TRUNG TÂM)
- * - Hiển thị tên, logo, toạ độ 6 chữ số thập phân kèm nút Copy
- * - Hiển thị thống kê trực tiếp: "Đang kết nối X trại gà, Y trại heo" (tự động cập nhật khi bật/tắt chip lọc)
+ * CARD THÔNG TIN NHÀ MÁY CÁM (LẤY TRỰC TIẾP TỪ DỮ LIỆU GOOGLE MY MAPS)
+ * - Hiển thị tên thật, nhãn mô tả (có nút Sửa mô tả cho Quản trị viên), toạ độ 6 chữ số thập phân kèm nút Copy
+ * - Hiển thị thống kê trực tiếp: "Độ phủ cung ứng: X trại gà, Y trại heo"
  * - Cho phép bấm vào từng trại đang kết nối trong danh sách hoặc đóng card để thu hồi đường cung
  */
 export const HubDetailCard: React.FC<HubDetailCardProps> = ({
   centralHub,
+  feedMillFarm,
+  customLabels,
   farms,
   activeCategories,
   logoUrl,
   onClose,
   onSelectFarm,
   liteMode = false,
+  isAdmin = false,
+  onSaveCustomLabel,
   mobileSheetSnap = 'half',
   onChangeMobileSheetSnap,
 }) => {
   const [copied, setCopied] = useState(false);
   const [logoError, setLogoError] = useState(false);
+  const [isEditingLabel, setIsEditingLabel] = useState(false);
+  const [labelInput, setLabelInput] = useState('');
+  const [isSavingLabel, setIsSavingLabel] = useState(false);
   const deviceMode = useDeviceCardMode();
+
+  const hubDisplayLabel = feedMillFarm
+    ? getLocationDisplayLabel(feedMillFarm, customLabels)
+    : 'Nhà máy cám';
+
+  const handleCommitHubLabel = async (nextVal: string) => {
+    if (!feedMillFarm || !onSaveCustomLabel || isSavingLabel) return;
+    setIsSavingLabel(true);
+    try {
+      await onSaveCustomLabel(feedMillFarm, nextVal.trim());
+      setIsEditingLabel(false);
+    } finally {
+      setIsSavingLabel(false);
+    }
+  };
 
   const connectedFarms = farms.filter(
     (f) =>
+      !f.isFeedMill &&
+      f.id !== centralHub.id &&
       f.isConnectable &&
       (f.category === 'chicken' || f.category === 'pig') &&
       activeCategories[f.category]
@@ -840,16 +990,30 @@ export const HubDetailCard: React.FC<HubDetailCardProps> = ({
         {/* Header cố định */}
         <div className="relative z-10 shrink-0 border-b border-emerald-950/10 px-4 pt-2.5 pb-3 sm:px-5">
           <div className="mb-1.5 flex items-center justify-between gap-2">
-            <div className="flex items-center gap-1.5 text-xs font-extrabold text-[#2b8fd0]">
+            <div className="flex flex-wrap items-center gap-1.5 text-xs font-extrabold text-[#2b8fd0]">
               <Radio className="h-4 w-4 animate-pulse text-[#d9261c]" />
-              <span>TRUNG TÂM ĐIỀU HÀNH & KẾT NỐI</span>
+              <span>{hubDisplayLabel.toUpperCase()}</span>
+              {isAdmin && feedMillFarm && onSaveCustomLabel && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLabelInput(hubDisplayLabel);
+                    setIsEditingLabel((prev) => !prev);
+                  }}
+                  title="Sửa nhãn mô tả phân loại"
+                  className="inline-flex items-center gap-1 rounded-full border border-[#2b8fd0]/30 bg-[#2b8fd0]/10 px-2 py-0.5 text-[10px] font-extrabold text-[#2b8fd0] transition-colors hover:bg-[#2b8fd0] hover:text-white cursor-pointer"
+                >
+                  <Pencil className="h-2.5 w-2.5" />
+                  <span>Sửa mô tả</span>
+                </button>
+              )}
             </div>
 
             <button
               type="button"
               onClick={onClose}
               title="Đóng & thu hồi đường kết nối"
-              aria-label="Đóng thẻ nhà máy trung tâm"
+              aria-label="Đóng thẻ Nhà Máy Cám"
               className="flex h-9 w-9 items-center justify-center rounded-full border border-emerald-950/10 bg-white/90 text-[#0f2a24] shadow-xs transition-colors hover:border-[#d9261c] hover:bg-rose-50 hover:text-[#d9261c] cursor-pointer"
             >
               <X className="h-4 w-4" />
@@ -881,6 +1045,59 @@ export const HubDetailCard: React.FC<HubDetailCardProps> = ({
               </p>
             </div>
           </div>
+
+          {isAdmin && feedMillFarm && onSaveCustomLabel && isEditingLabel && (
+            <div className="mt-2.5 rounded-2xl border border-[#2b8fd0]/30 bg-sky-50/85 p-2.5 text-xs">
+              <div className="mb-1.5 flex flex-wrap gap-1">
+                {PRESET_LOCATION_LABELS.map((preset) => (
+                  <button
+                    key={preset}
+                    type="button"
+                    disabled={isSavingLabel}
+                    onClick={() => setLabelInput(preset)}
+                    className={`rounded-full px-2 py-0.5 text-[10px] font-bold transition-colors cursor-pointer ${
+                      labelInput.trim() === preset
+                        ? 'bg-[#2b8fd0] text-white'
+                        : 'border border-emerald-950/15 bg-white text-[#0f2a24] hover:border-[#2b8fd0]'
+                    }`}
+                  >
+                    {preset}
+                  </button>
+                ))}
+              </div>
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="text"
+                  value={labelInput}
+                  maxLength={60}
+                  onChange={(e) => setLabelInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleCommitHubLabel(labelInput);
+                    }
+                  }}
+                  placeholder="Nhập nhãn mô tả..."
+                  className="min-w-0 flex-1 rounded-xl border border-[#2b8fd0]/35 bg-white px-2.5 py-1.5 text-xs font-semibold text-[#0f2a24] focus:border-[#2b8fd0] focus:outline-none"
+                />
+                <button
+                  type="button"
+                  disabled={isSavingLabel}
+                  onClick={() => handleCommitHubLabel(labelInput)}
+                  className="shrink-0 rounded-xl bg-[#2b8fd0] px-3 py-1.5 text-xs font-extrabold text-white shadow-xs hover:bg-[#1e74ad] disabled:opacity-60 cursor-pointer"
+                >
+                  {isSavingLabel ? '...' : 'Lưu'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsEditingLabel(false)}
+                  className="shrink-0 rounded-xl border border-emerald-950/15 bg-white px-2 py-1.5 text-xs font-bold text-[#0f2a24] cursor-pointer"
+                >
+                  Huỷ
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* Khối thống kê độ phủ cung ứng trực tiếp */}
           <div className="mt-2.5 rounded-2xl border border-[#facc15]/60 bg-gradient-to-r from-amber-50/95 via-sky-50/90 to-rose-50/90 px-3.5 py-2.5 shadow-2xs">

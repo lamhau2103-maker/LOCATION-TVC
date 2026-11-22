@@ -105,20 +105,23 @@ export function buildBiosecurityGeoJSON(
 }
 
 /**
- * Tính tâm và mức zoom phù hợp để bao quát toàn bộ hệ thống trang trại + nhà máy trung tâm
+ * Tính tâm và mức zoom phù hợp để bao quát toàn bộ hệ thống trang trại + Nhà Máy Cám
  */
 export function getSystemCenterAndZoom(
   farms: Farm[],
-  hub: CentralHub
+  hub?: CentralHub | null
 ): { center: [number, number]; zoom: number } {
   if (!farms.length) {
-    return { center: [hub.lng, hub.lat], zoom: 10 };
+    if (hub) {
+      return { center: [hub.lng, hub.lat], zoom: 10 };
+    }
+    return { center: [106.8, 14.5], zoom: 6 };
   }
 
-  let minLat = hub.lat;
-  let maxLat = hub.lat;
-  let minLng = hub.lng;
-  let maxLng = hub.lng;
+  let minLat = hub ? hub.lat : farms[0].lat;
+  let maxLat = hub ? hub.lat : farms[0].lat;
+  let minLng = hub ? hub.lng : farms[0].lng;
+  let maxLng = hub ? hub.lng : farms[0].lng;
 
   for (const f of farms) {
     if (f.lat < minLat) minLat = f.lat;

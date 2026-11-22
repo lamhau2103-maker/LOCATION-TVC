@@ -18,6 +18,7 @@ import {
   CentralHub,
   Farm,
   FarmCategory,
+  FarmCustomLabels,
   FarmSubType,
   MapStyleMode,
   PositionDiagnosticItem,
@@ -31,6 +32,9 @@ import {
 import {
   addSingleFarmIconToMap,
   createFarmPinCanvasSync,
+  getLocationDisplayLabel,
+  preloadHubLogo,
+  refreshHubIconOnMap,
   registerMapLibreFarmIcons,
 } from '../utils/icons';
 import { AtmosphericCloudsOverlay } from './CursorSpotlight';
@@ -53,7 +57,8 @@ interface MapSceneProps {
   newlyAddedIds: Set<string>;
   removingFarms: Farm[];
   bouncingFarmId?: string | null;
-  centralHub: CentralHub;
+  centralHub: CentralHub | null;
+  customLabels?: FarmCustomLabels;
   selectedFarm: Farm | null;
   isHubSelected: boolean;
   singleArcFarmId: string | null;
@@ -76,6 +81,8 @@ const CARTO_VOYAGER_TILES = [
   'https://b.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}@2x.png',
   'https://c.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}@2x.png',
 ];
+
+const OSM_STANDARD_TILES = ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'];
 
 const ESRI_SATELLITE_TILES =
   'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
@@ -170,22 +177,30 @@ function computeCameraPadding(
 }
 
 /**
- * Nền Bản đồ 2D Đường phố / Hành chính phẳng nhẹ (Carto Voyager / OSM style giống Google My Maps):
- * Hiển thị rõ ranh giới, đường giao thông, tên địa danh, tải tức thì và không bao giờ giật lag.
+ * Nền Bản đồ 2D Đường phố / Hành chính miễn phí 100%, không cần API Key:
+ * - Mặc định dùng CartoDB Voyager (@2x sắc nét, rõ tên địa danh Việt Nam)
+ * - Tự động chuyển dự phòng sang OpenStreetMap chuẩn nếu CartoDB lỗi tải tile
  */
-function create2DStreetBaseStyle(): maplibregl.StyleSpecification {
+function create2DStreetBaseStyle(
+  useOsmFallback = false
+): maplibregl.StyleSpecification {
+  const sourceId = useOsmFallback ? 'osm-standard' : 'carto-voyager';
+  const layerId = useOsmFallback ? 'osm-standard-base' : 'carto-voyager-base';
   return {
     version: 8,
-    name: 'ThaiViet 2D Street Voyager',
+    name: useOsmFallback
+      ? 'ThaiViet 2D OpenStreetMap'
+      : 'ThaiViet 2D Street Voyager',
     glyphs: 'https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf',
     sources: {
-      'carto-voyager': {
+      [sourceId]: {
         type: 'raster',
-        tiles: CARTO_VOYAGER_TILES,
+        tiles: useOsmFallback ? OSM_STANDARD_TILES : CARTO_VOYAGER_TILES,
         tileSize: 256,
         maxzoom: 19,
-        attribution:
-          '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+        attribution: useOsmFallback
+          ? '© OpenStreetMap contributors'
+          : '© OpenStreetMap contributors © CARTO',
       },
     },
     layers: [
@@ -197,9 +212,9 @@ function create2DStreetBaseStyle(): maplibregl.StyleSpecification {
         },
       },
       {
-        id: 'carto-voyager-base',
+        id: layerId,
         type: 'raster',
-        source: 'carto-voyager',
+        source: sourceId,
         paint: {
           'raster-opacity': 1,
           'raster-fade-duration': 0,
@@ -210,10 +225,10 @@ function create2DStreetBaseStyle(): maplibregl.StyleSpecification {
 }
 
 /**
- * Nền Bản đồ Vệ tinh (chỉ kích hoạt khi người dùng chủ động bấm nút chuyển sang Vệ tinh trong Tùy chỉnh)
+ * Nền Bản đồ Vệ tinh Esri World Imagery (miễn phí 100%, không cần API Key)
  */
 function createSatelliteBaseStyle(
-  satelliteMaxZoom = 16
+  satelliteMaxZoom = 18
 ): maplibregl.StyleSpecification {
   return {
     version: 8,
@@ -357,31 +372,71 @@ interface GlobeArcDatum {
   color: [string, string];
 }
 
-// Bộ nhớ đệm THREE.CanvasTexture cho từng loại ghim icon trên Quả địa cầu 3D (vẽ tức thì từ Canvas 2D)
+// Bộ nhớ đệm THREE.CanvasTexture 256x256 siêu nét (Retina 4x) cho từng loại ghim icon trên Quả địa cầu 3D
 const globeSpriteTextureCache = new Map<string, THREE.CanvasTexture>();
+
+function configureSharpSpriteTexture(
+  texture: THREE.CanvasTexture,
+  maxAnisotropy: number
+): THREE.CanvasTexture {
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.minFilter = THREE.LinearFilter;
+  texture.magFilter = THREE.LinearFilter;
+  texture.generateMipmaps = false;
+  texture.anisotropy = Math.max(1, maxAnisotropy);
+  texture.needsUpdate = true;
+  return texture;
+}
 
 function getGlobePinTexture(
   subType: FarmSubType | 'hub',
-  isSelected: boolean
+  isSelected: boolean,
+  maxAnisotropy = 16
 ): THREE.CanvasTexture {
   const key = `${subType}-${isSelected ? 'selected' : 'normal'}`;
   const existing = globeSpriteTextureCache.get(key);
   if (existing) return existing;
 
-  const { canvas } = createFarmPinCanvasSync(subType, isSelected, 2);
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  texture.needsUpdate = true;
+  const { canvas } = createFarmPinCanvasSync(subType, isSelected, 4);
+  const texture = configureSharpSpriteTexture(
+    new THREE.CanvasTexture(canvas),
+    maxAnisotropy
+  );
   globeSpriteTextureCache.set(key, texture);
   return texture;
+}
+
+function refreshGlobeHubTextures(maxAnisotropy = 16): void {
+  const variants: Array<{ key: string; isSelected: boolean }> = [
+    { key: 'hub-normal', isSelected: false },
+    { key: 'hub-selected', isSelected: true },
+  ];
+  for (const variant of variants) {
+    const { canvas } = createFarmPinCanvasSync('hub', variant.isSelected, 4);
+    const existing = globeSpriteTextureCache.get(variant.key);
+    if (existing) {
+      existing.image = canvas;
+      configureSharpSpriteTexture(existing, maxAnisotropy);
+    } else {
+      globeSpriteTextureCache.set(
+        variant.key,
+        configureSharpSpriteTexture(
+          new THREE.CanvasTexture(canvas),
+          maxAnisotropy
+        )
+      );
+    }
+  }
 }
 
 export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
   (
     {
       stage,
+      logoUrl,
       farms,
       centralHub,
+      customLabels,
       selectedFarm,
       isHubSelected,
       singleArcFarmId,
@@ -403,21 +458,36 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
     const globeContainerRef = useRef<HTMLDivElement | null>(null);
     const globeRef = useRef<GlobeInstance | null>(null);
     const globeSpritesMapRef = useRef<Map<string, THREE.Sprite>>(new Map());
+    const maxAnisotropyRef = useRef<number>(16);
 
     const mapContainerRef = useRef<HTMLDivElement | null>(null);
     const mapRef = useRef<maplibregl.Map | null>(null);
     const isMapLoadedRef = useRef(false);
 
-    const esriMaxZoomRef = useRef<number>(16);
+    const esriMaxZoomRef = useRef<number>(18);
     const tileErrorTimestampsRef = useRef<number[]>([]);
+    const streetFallbackToOsmRef = useRef<boolean>(false);
+    const streetTileErrorTimestampsRef = useRef<number[]>([]);
+    const [usingOsmFallback, setUsingOsmFallback] = useState<boolean>(false);
 
     const [currentZoom, setCurrentZoom] = useState(6.2);
     const [hoveredId, setHoveredId] = useState<string | null>(null);
     const [hoveredTooltip, setHoveredTooltip] = useState<{
       name: string;
+      badge?: string;
       x: number;
       y: number;
     } | null>(null);
+
+    // Nạp sẵn Logo hoa sen thật (/logo.png) để vẽ sắc nét 256x256 vào giữa ghim Nhà Máy Cám
+    useEffect(() => {
+      preloadHubLogo(logoUrl, () => {
+        refreshGlobeHubTextures(maxAnisotropyRef.current);
+        if (mapRef.current && isMapLoadedRef.current) {
+          refreshHubIconOnMap(mapRef.current);
+        }
+      });
+    }, [logoUrl]);
 
     // Lưu toạ độ thực tế đang vẽ để đối chiếu trong "Kiểm tra vị trí"
     const renderedCoordsMapRef = useRef<
@@ -433,25 +503,31 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
     const matchedFarmIds = useMemo(() => {
       if (!normalizedQuery) return new Set<string>();
       return new Set(
-        visibleFarms
-          .filter(
-            (f) =>
+        farms
+          .filter((f) => {
+            const label = getLocationDisplayLabel(f, customLabels)
+              .toLowerCase()
+              .normalize('NFC');
+            return (
               f.name.toLowerCase().normalize('NFC').includes(normalizedQuery) ||
               f.type.toLowerCase().normalize('NFC').includes(normalizedQuery) ||
+              label.includes(normalizedQuery) ||
               f.description
                 .toLowerCase()
                 .normalize('NFC')
                 .includes(normalizedQuery)
-          )
+            );
+          })
           .map((f) => f.id)
       );
-    }, [visibleFarms, normalizedQuery]);
+    }, [farms, normalizedQuery, customLabels]);
 
     const latestStateRef = useRef({
       stage,
       visibleFarms,
       farms,
       centralHub,
+      customLabels,
       selectedFarm,
       isHubSelected,
       singleArcFarmId,
@@ -471,6 +547,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
       visibleFarms,
       farms,
       centralHub,
+      customLabels,
       selectedFarm,
       isHubSelected,
       singleArcFarmId,
@@ -485,11 +562,15 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
       onSatelliteFallbackToStreet,
     };
 
-    // Danh sách các trại Gà & Heo đang bật kết nối với Nhà máy trung tâm
+    // Danh sách các trại Gà & Heo đang bật kết nối một chiều từ Nhà Máy Cám thật trong dữ liệu My Maps
     const activeTargetFarms = useMemo(() => {
+      if (!centralHub) return [];
+      const hubId = centralHub.id;
       if (isHubSelected) {
         return visibleFarms.filter(
           (f) =>
+            !f.isFeedMill &&
+            f.id !== hubId &&
             f.isConnectable &&
             (f.category === 'chicken' || f.category === 'pig')
         );
@@ -498,41 +579,29 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         return visibleFarms.filter(
           (f) =>
             f.id === singleArcFarmId &&
+            !f.isFeedMill &&
+            f.id !== hubId &&
             f.isConnectable &&
             (f.category === 'chicken' || f.category === 'pig')
         );
       }
       return [];
-    }, [isHubSelected, singleArcFarmId, visibleFarms]);
+    }, [centralHub, isHubSelected, singleArcFarmId, visibleFarms]);
 
-    // Dữ liệu ghim icon 3D (`customLayerData`) trên Quả địa cầu 3D (`globe.gl`)
+    // Dữ liệu ghim icon 3D (`customLayerData`) trên Quả địa cầu 3D (`globe.gl`) — CHỈ gồm các điểm thật từ My Maps
     const globePinData = useMemo<GlobeCustomPinDatum[]>(() => {
-      let hubCoords: [number, number] = [
-        Number(centralHub.lng),
-        Number(centralHub.lat),
-      ];
-      if (Math.abs(hubCoords[0]) < 30 && Math.abs(hubCoords[1]) >= 30) {
-        hubCoords = [hubCoords[1], hubCoords[0]];
-      }
-      const [hubLng, hubLat] = hubCoords;
-
       const hasSearch = normalizedQuery.length > 0;
-      const items: GlobeCustomPinDatum[] = [
-        {
-          id: '__CENTRAL_HUB__',
-          name: centralHub.name,
-          lat: hubLat,
-          lng: hubLng,
-          subType: 'hub',
-          category: 'hub',
-          isHub: true,
-          isConnectable: true,
-          isSelected: isHubSelected,
-          opacity: 1,
-        },
-      ];
+      const items: GlobeCustomPinDatum[] = [];
 
-      for (const f of visibleFarms) {
+      for (const f of farms) {
+        const isHub = Boolean(
+          f.isFeedMill ||
+            f.subType === 'hub' ||
+            (centralHub?.id && f.id === centralHub.id)
+        );
+        // Luôn hiển thị Nhà Máy Cám làm tâm mạng lưới, còn các điểm khác tuân theo bộ lọc chip
+        if (!isHub && !activeCategories[f.category]) continue;
+
         let coords: [number, number] = [Number(f.lng), Number(f.lat)];
         if (Math.abs(coords[0]) < 30 && Math.abs(coords[1]) >= 30) {
           coords = [coords[1], coords[0]];
@@ -540,11 +609,14 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         const [exactLng, exactLat] = coords;
 
         const isConnectable =
+          !isHub &&
           Boolean(f.isConnectable) &&
           (f.category === 'chicken' || f.category === 'pig');
 
         let opacity = 1;
-        if (isHubSelected && !isConnectable) {
+        if (isHub) {
+          opacity = hasSearch && !matchedFarmIds.has(f.id) ? 0.72 : 1;
+        } else if (isHubSelected && !isConnectable) {
           opacity = 0.35;
         } else if (hasSearch && !matchedFarmIds.has(f.id)) {
           opacity = 0.35;
@@ -555,11 +627,11 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
           name: f.name,
           lat: exactLat,
           lng: exactLng,
-          subType: f.subType || f.category,
-          category: f.category,
-          isHub: false,
+          subType: isHub ? 'hub' : f.subType || f.category,
+          category: isHub ? 'hub' : f.category,
+          isHub,
           isConnectable,
-          isSelected: selectedFarm?.id === f.id,
+          isSelected: isHub ? isHubSelected : selectedFarm?.id === f.id,
           opacity,
           farm: f,
         });
@@ -567,17 +639,18 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
 
       return items;
     }, [
+      farms,
       centralHub,
-      visibleFarms,
+      activeCategories,
       isHubSelected,
       selectedFarm,
       normalizedQuery,
       matchedFarmIds,
     ]);
 
-    // Dữ liệu đường cung đốm sáng một chiều trên Quả địa cầu 3D (`arcsData` của `globe.gl`)
+    // Dữ liệu đường cung đốm sáng một chiều từ Nhà Máy Cám thật ➔ Trại Gà & Trại Heo trên Quả địa cầu 3D
     const globeArcsData = useMemo<GlobeArcDatum[]>(() => {
-      if (activeTargetFarms.length === 0) return [];
+      if (!centralHub || activeTargetFarms.length === 0) return [];
       let hubCoords: [number, number] = [
         Number(centralHub.lng),
         Number(centralHub.lat),
@@ -653,6 +726,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         });
       },
       flyToHub: () => {
+        if (!centralHub) return;
         const map = mapRef.current;
         if (map && latestStateRef.current.stage === 'map') {
           const hubLng = Number(centralHub.lng);
@@ -784,33 +858,13 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
       getPositionDiagnostics: (): PositionDiagnosticItem[] => {
         const items: PositionDiagnosticItem[] = [];
         const hub = latestStateRef.current.centralHub;
-        const hubRendered =
-          renderedCoordsMapRef.current.get('__CENTRAL_HUB__') || {
-            lat: hub.lat,
-            lng: hub.lng,
-          };
-        const hubDevMeters =
-          calculateDistanceKm(
-            hub.lat,
-            hub.lng,
-            hubRendered.lat,
-            hubRendered.lng
-          ) * 1000;
-
-        items.push({
-          id: '__CENTRAL_HUB__',
-          name: hub.name,
-          isHub: true,
-          category: 'hub',
-          rawLat: hub.lat,
-          rawLng: hub.lng,
-          renderedLat: hubRendered.lat,
-          renderedLng: hubRendered.lng,
-          deviationMeters: hubDevMeters,
-          isAccurate: hubDevMeters < 1,
-        });
 
         for (const f of latestStateRef.current.farms) {
+          const isHub = Boolean(
+            f.isFeedMill ||
+              f.subType === 'hub' ||
+              (hub?.id && f.id === hub.id)
+          );
           const rendered = renderedCoordsMapRef.current.get(f.id) || {
             lat: f.lat,
             lng: f.lng,
@@ -821,8 +875,8 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
           items.push({
             id: f.id,
             name: f.name,
-            isHub: false,
-            category: f.category,
+            isHub,
+            category: isHub ? 'hub' : f.category,
             rawLat: f.lat,
             rawLng: f.lng,
             renderedLat: rendered.lat,
@@ -857,7 +911,11 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         .customLayerData([])
         .customThreeObject((d: object) => {
           const item = d as GlobeCustomPinDatum;
-          const texture = getGlobePinTexture(item.subType, item.isSelected);
+          const texture = getGlobePinTexture(
+            item.subType,
+            item.isSelected,
+            maxAnisotropyRef.current
+          );
           const material = new THREE.SpriteMaterial({
             map: texture,
             transparent: true,
@@ -893,7 +951,11 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
           }
 
           const mat = sprite.material as THREE.SpriteMaterial;
-          const nextTex = getGlobePinTexture(item.subType, item.isSelected);
+          const nextTex = getGlobePinTexture(
+            item.subType,
+            item.isSelected,
+            maxAnisotropyRef.current
+          );
           if (mat.map !== nextTex) {
             mat.map = nextTex;
             mat.needsUpdate = true;
@@ -908,7 +970,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         .onCustomLayerClick((obj: object) => {
           const item = obj as GlobeCustomPinDatum;
           if (!item) return;
-          if (item.isHub || item.id === '__CENTRAL_HUB__') {
+          if (item.isHub) {
             latestStateRef.current.onSelectHub();
           } else if (item.farm) {
             latestStateRef.current.onSelectFarm(item.farm);
@@ -921,7 +983,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
           }
           setHoveredId(item ? item.id : null);
         })
-        // Đường cung đốm sáng chạy liên tục một chiều từ Nhà máy trung tâm ➔ Trại Gà & Trại Heo
+        // Đường cung đốm sáng chạy liên tục một chiều từ Nhà Máy Cám ➔ Trại Gà & Trại Heo
         .arcsData([])
         .arcStartLat((d: object) => (d as GlobeArcDatum).startLat)
         .arcStartLng((d: object) => (d as GlobeArcDatum).startLng)
@@ -934,6 +996,21 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         .arcDashGap(0.82)
         .arcDashInitialGap(() => Math.random())
         .arcDashAnimateTime(1600);
+
+      // Bật bộ lọc anisotropic cao nhất của WebGL renderer để ghim icon 3D luôn sắc nét ở mọi góc nhìn
+      try {
+        const renderer = globe.renderer();
+        if (renderer?.capabilities?.getMaxAnisotropy) {
+          const maxAniso = renderer.capabilities.getMaxAnisotropy();
+          maxAnisotropyRef.current = maxAniso;
+          globeSpriteTextureCache.forEach((tex) => {
+            tex.anisotropy = maxAniso;
+            tex.needsUpdate = true;
+          });
+        }
+      } catch {
+        // ignore
+      }
 
       // Đặt góc nhìn khởi tạo hướng về Việt Nam / Đông Nam Á
       globe.pointOfView(
@@ -1031,82 +1108,66 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
     // 2. BẢN ĐỒ PHẲNG 2D NHẸ (MAPLIBRE GL — PITCH: 0, CARTO VOYAGER / OSM STYLE)
     // =========================================================================
     const buildFarmsSourceGeoJSON = useCallback(
-      (allFarms: Farm[], hub: CentralHub) => {
-        let hubCoords: [number, number] = [Number(hub.lng), Number(hub.lat)];
-        if (Math.abs(hubCoords[0]) < 30 && Math.abs(hubCoords[1]) >= 30) {
-          hubCoords = [hubCoords[1], hubCoords[0]];
-        }
-        const [hubLng, hubLat] = hubCoords;
+      (
+        allFarms: Farm[],
+        hub: CentralHub | null,
+        labels?: FarmCustomLabels
+      ) => {
+        renderedCoordsMapRef.current.clear();
 
-        renderedCoordsMapRef.current.set('__CENTRAL_HUB__', {
-          lat: hubLat,
-          lng: hubLng,
-        });
+        const features = allFarms.map((f) => {
+          let coords: [number, number] = [Number(f.lng), Number(f.lat)];
+          if (Math.abs(coords[0]) < 30 && Math.abs(coords[1]) >= 30) {
+            coords = [coords[1], coords[0]];
+          }
+          const [exactLng, exactLat] = coords;
 
-        const features = [
-          {
+          renderedCoordsMapRef.current.set(f.id, {
+            lat: exactLat,
+            lng: exactLng,
+          });
+
+          const isHub = Boolean(
+            f.isFeedMill ||
+              f.subType === 'hub' ||
+              (hub?.id && f.id === hub.id)
+          );
+          const iconKey = isHub
+            ? 'farm-icon-hub'
+            : f.subType
+            ? `farm-icon-${f.subType}`
+            : `farm-icon-${f.category}`;
+          const markerAlias = isHub
+            ? 'marker-factory'
+            : f.category === 'chicken'
+            ? 'marker-chicken'
+            : f.category === 'pig'
+            ? 'marker-pig'
+            : 'marker-other';
+          const catColor = isHub ? '#2b8fd0' : getCategoryConfig(f.category).hex;
+          const displayLabel = getLocationDisplayLabel(f, labels);
+
+          return {
             type: 'Feature' as const,
             properties: {
-              id: '__CENTRAL_HUB__',
-              name: hub.name,
-              category: 'hub',
-              isHub: true,
-              isConnectable: true,
-              iconImage: 'farm-icon-hub',
-              markerIcon: 'marker-factory',
-              color: '#2b8fd0',
-              lat: hubLat,
-              lng: hubLng,
+              id: f.id,
+              name: f.name,
+              displayLabel,
+              category: isHub ? 'hub' : f.category,
+              isHub,
+              isConnectable: isHub ? false : Boolean(f.isConnectable),
+              iconImage: iconKey,
+              markerIcon: markerAlias,
+              color: catColor,
+              lat: exactLat,
+              lng: exactLng,
             },
             geometry: {
               type: 'Point' as const,
-              coordinates: [hubLng, hubLat],
+              coordinates: [exactLng, exactLat],
             },
-          },
-          ...allFarms.map((f) => {
-            let coords: [number, number] = [Number(f.lng), Number(f.lat)];
-            if (Math.abs(coords[0]) < 30 && Math.abs(coords[1]) >= 30) {
-              coords = [coords[1], coords[0]];
-            }
-            const [exactLng, exactLat] = coords;
-
-            renderedCoordsMapRef.current.set(f.id, {
-              lat: exactLat,
-              lng: exactLng,
-            });
-
-            const iconKey = f.subType
-              ? `farm-icon-${f.subType}`
-              : `farm-icon-${f.category}`;
-            const markerAlias =
-              f.category === 'chicken'
-                ? 'marker-chicken'
-                : f.category === 'pig'
-                ? 'marker-pig'
-                : 'marker-other';
-            const catColor = getCategoryConfig(f.category).hex;
-
-            return {
-              type: 'Feature' as const,
-              properties: {
-                id: f.id,
-                name: f.name,
-                category: f.category,
-                isHub: false,
-                isConnectable: Boolean(f.isConnectable),
-                iconImage: iconKey,
-                markerIcon: markerAlias,
-                color: catColor,
-                lat: exactLat,
-                lng: exactLng,
-              },
-              geometry: {
-                type: 'Point' as const,
-                coordinates: [exactLng, exactLat],
-              },
-            };
-          }),
-        ];
+          };
+        });
 
         return {
           type: 'FeatureCollection' as const,
@@ -1122,6 +1183,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         cats: Record<FarmCategory, boolean>,
         curSelectedId: string | null,
         curHubSelected: boolean,
+        curHubId: string | null,
         curHoveredId: string | null,
         curQuery: string,
         curMatchedIds: Set<string>,
@@ -1140,14 +1202,14 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
 
         const labelFilter: maplibregl.FilterSpecification = [
           'all',
-          ['!=', ['get', 'id'], '__CENTRAL_HUB__'],
+          ['!=', ['get', 'isHub'], true],
           ['in', ['get', 'category'], ['literal', allowedCategories]],
         ];
 
         const activeSelectedId = curSelectedId
           ? curSelectedId
-          : curHubSelected
-          ? '__CENTRAL_HUB__'
+          : curHubSelected && curHubId
+          ? curHubId
           : '__NONE__';
 
         const selectedFilter: maplibregl.FilterSpecification = [
@@ -1188,7 +1250,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
           if (curHubSelected) {
             featureAlphaExpr = [
               'case',
-              ['==', ['get', 'id'], '__CENTRAL_HUB__'],
+              ['boolean', ['get', 'isHub'], false],
               1,
               ['boolean', ['get', 'isConnectable'], false],
               1,
@@ -1197,10 +1259,10 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
           } else if (hasSearch) {
             featureAlphaExpr = [
               'case',
-              ['==', ['get', 'id'], '__CENTRAL_HUB__'],
-              0.7,
               ['in', ['get', 'id'], ['literal', matchedArray]],
               1,
+              ['boolean', ['get', 'isHub'], false],
+              0.72,
               0.35,
             ];
           }
@@ -1224,7 +1286,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
 
           if (map.getLayer('hub-label')) {
             const forceShowHubLabel =
-              curHubSelected || curHoveredId === '__CENTRAL_HUB__';
+              curHubSelected || (curHubId !== null && curHoveredId === curHubId);
             map.setPaintProperty(
               'hub-label',
               'text-opacity',
@@ -1254,6 +1316,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
           farms: allFarms,
           visibleFarms: curVisibleFarms,
           centralHub: curHub,
+          customLabels: curLabels,
           selectedFarm: curSelected,
           isHubSelected: curHubSelected,
           activeCategories: curCats,
@@ -1441,8 +1504,8 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
           });
         }
 
-        // Nguồn GeoJSON duy nhất "farms" cho toàn bộ trang trại & nhà máy trung tâm
-        const farmsGeoJSON = buildFarmsSourceGeoJSON(allFarms, curHub);
+        // Nguồn GeoJSON duy nhất "farms" cho toàn bộ điểm thật từ My Maps (bao gồm Nhà Máy Cám)
+        const farmsGeoJSON = buildFarmsSourceGeoJSON(allFarms, curHub, curLabels);
         if (!map.getSource('farms')) {
           map.addSource('farms', {
             type: 'geojson',
@@ -1513,7 +1576,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
             type: 'symbol',
             source: 'farms',
             minzoom: 11,
-            filter: ['!=', ['get', 'id'], '__CENTRAL_HUB__'],
+            filter: ['!=', ['get', 'isHub'], true],
             layout: {
               'text-field': ['get', 'name'],
               'text-font': ['Noto Sans Regular'],
@@ -1546,7 +1609,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
             id: 'hub-label',
             type: 'symbol',
             source: 'farms',
-            filter: ['==', ['get', 'id'], '__CENTRAL_HUB__'],
+            filter: ['==', ['get', 'isHub'], true],
             layout: {
               'text-field': ['get', 'name'],
               'text-font': ['Noto Sans Regular'],
@@ -1565,8 +1628,14 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
           });
         }
 
-        // Layer symbol "farm-icons": Luôn hiển thị đầy đủ ghim icon ở mọi mức zoom từ xa tới gần
+        // Layer symbol "farm-icons": Ghim 3D siêu nét 256x256 (pixelRatio: 4), Nhà Máy Cám lớn hơn 1.25x
         if (!map.getLayer('farm-icons')) {
+          const hubMult: maplibregl.ExpressionSpecification = [
+            'case',
+            ['boolean', ['get', 'isHub'], false],
+            1.25,
+            1,
+          ];
           map.addLayer({
             id: 'farm-icons',
             type: 'symbol',
@@ -1578,15 +1647,15 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
                 ['linear'],
                 ['zoom'],
                 2,
-                0.55 * deviceFactor,
+                ['*', 0.58 * deviceFactor, hubMult],
                 6,
-                0.65 * deviceFactor,
+                ['*', 0.68 * deviceFactor, hubMult],
                 10,
-                0.76 * deviceFactor,
+                ['*', 0.78 * deviceFactor, hubMult],
                 14,
-                0.88 * deviceFactor,
+                ['*', 0.9 * deviceFactor, hubMult],
                 18,
-                0.94 * deviceFactor,
+                ['*', 0.96 * deviceFactor, hubMult],
               ],
               'icon-anchor': 'bottom',
               'icon-offset': [0, 0],
@@ -1594,7 +1663,12 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
               'icon-ignore-placement': true,
               'icon-pitch-alignment': 'viewport',
               'icon-rotation-alignment': 'viewport',
-              'symbol-sort-key': ['-', 90, ['get', 'lat']],
+              'symbol-sort-key': [
+                'case',
+                ['boolean', ['get', 'isHub'], false],
+                1000,
+                ['-', 90, ['get', 'lat']],
+              ],
             },
             paint: {
               'icon-opacity': 1,
@@ -1603,6 +1677,12 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         }
 
         if (!map.getLayer('farm-selected')) {
+          const hubSelMult: maplibregl.ExpressionSpecification = [
+            'case',
+            ['boolean', ['get', 'isHub'], false],
+            1.2,
+            1,
+          ];
           map.addLayer({
             id: 'farm-selected',
             type: 'symbol',
@@ -1615,15 +1695,15 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
                 ['linear'],
                 ['zoom'],
                 2,
-                0.55 * 1.25 * deviceFactor,
+                ['*', 0.58 * 1.25 * deviceFactor, hubSelMult],
                 6,
-                0.65 * 1.25 * deviceFactor,
+                ['*', 0.68 * 1.25 * deviceFactor, hubSelMult],
                 10,
-                0.76 * 1.25 * deviceFactor,
+                ['*', 0.78 * 1.25 * deviceFactor, hubSelMult],
                 14,
-                0.88 * 1.25 * deviceFactor,
+                ['*', 0.9 * 1.25 * deviceFactor, hubSelMult],
                 18,
-                0.94 * 1.25 * deviceFactor,
+                ['*', 0.96 * 1.25 * deviceFactor, hubSelMult],
               ],
               'icon-anchor': 'bottom',
               'icon-offset': [0, 0],
@@ -1643,6 +1723,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
           curCats,
           curSelected?.id || null,
           curHubSelected,
+          curHub?.id || null,
           null,
           '',
           new Set(),
@@ -1659,7 +1740,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
       const initialStyle =
         mapStyleMode === 'satellite'
           ? createSatelliteBaseStyle(esriMaxZoomRef.current)
-          : create2DStreetBaseStyle();
+          : create2DStreetBaseStyle(streetFallbackToOsmRef.current);
 
       const { center, zoom } = getSystemCenterAndZoom(farms, centralHub);
 
@@ -1693,12 +1774,101 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         }
       });
 
+      const switchStreetToOsmFallback = () => {
+        if (streetFallbackToOsmRef.current) return;
+        streetFallbackToOsmRef.current = true;
+        setUsingOsmFallback(true);
+        try {
+          const beforeLayerId = map.getLayer('biosecurity-outer-glow')
+            ? 'biosecurity-outer-glow'
+            : undefined;
+          if (map.getLayer('carto-voyager-base')) {
+            map.removeLayer('carto-voyager-base');
+          }
+          if (map.getSource('carto-voyager')) {
+            map.removeSource('carto-voyager');
+          }
+          if (!map.getSource('osm-standard')) {
+            map.addSource('osm-standard', {
+              type: 'raster',
+              tiles: OSM_STANDARD_TILES,
+              tileSize: 256,
+              maxzoom: 19,
+              attribution: '© OpenStreetMap contributors',
+            });
+          }
+          if (!map.getLayer('osm-standard-base')) {
+            map.addLayer(
+              {
+                id: 'osm-standard-base',
+                type: 'raster',
+                source: 'osm-standard',
+                paint: {
+                  'raster-opacity': 1,
+                  'raster-fade-duration': 0,
+                },
+              },
+              beforeLayerId
+            );
+          }
+        } catch {
+          // Dự phòng nạp lại style OSM đầy đủ nếu map chưa kịp sẵn sàng
+          const savedCenter = map.getCenter();
+          const savedZoom = map.getZoom();
+          map.setStyle(create2DStreetBaseStyle(true));
+          map.once('style.load', () => {
+            registerMapLibreFarmIcons(map);
+            map.jumpTo({
+              center: savedCenter,
+              zoom: savedZoom,
+              pitch: 0,
+              bearing: 0,
+            });
+            setupCustomLayers(map);
+          });
+        }
+      };
+
       map.on(
         'error',
         (errEvent: maplibregl.ErrorEvent & { sourceId?: string }) => {
-          if (currentStyleModeRef.current !== 'satellite') return;
           const sourceId = errEvent?.sourceId || '';
           const errMsg = String(errEvent?.error?.message || '').toLowerCase();
+
+          // 1. Tự động chuyển dự phòng từ CartoDB Voyager sang OpenStreetMap chuẩn nếu lỗi tải tile
+          if (
+            currentStyleModeRef.current === 'street' &&
+            !streetFallbackToOsmRef.current
+          ) {
+            const isCartoTileError =
+              sourceId === 'carto-voyager' ||
+              errMsg.includes('cartocdn') ||
+              errMsg.includes('carto') ||
+              (sourceId === '' && errMsg.includes('tile'));
+
+            if (isCartoTileError) {
+              const now = Date.now();
+              const recent = streetTileErrorTimestampsRef.current.filter(
+                (ts) => now - ts <= 10_000
+              );
+              recent.push(now);
+              streetTileErrorTimestampsRef.current = recent;
+
+              if (
+                recent.length >= 2 ||
+                errMsg.includes('401') ||
+                errMsg.includes('403') ||
+                errMsg.includes('429')
+              ) {
+                streetTileErrorTimestampsRef.current = [];
+                switchStreetToOsmFallback();
+              }
+            }
+            return;
+          }
+
+          // 2. Xử lý lỗi tile khi đang ở chế độ Vệ tinh Esri World Imagery
+          if (currentStyleModeRef.current !== 'satellite') return;
           const isSatelliteTileError =
             sourceId === 'esri-world-imagery' ||
             errMsg.includes('arcgisonline') ||
@@ -1774,14 +1944,14 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         }
 
         const props = feat.properties || {};
-        if (props.isHub || props.id === '__CENTRAL_HUB__') {
+        if (props.isHub) {
           latestStateRef.current.onSelectHub();
           return;
         }
 
         const farmId = props.id || props.farmId;
         if (farmId) {
-          const matched = latestStateRef.current.visibleFarms.find(
+          const matched = latestStateRef.current.farms.find(
             (f) => f.id === farmId
           );
           if (matched) {
@@ -1801,22 +1971,27 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
 
         map.getCanvas().style.cursor = 'pointer';
         const props = feat.properties || {};
-        if (props.isHub || props.id === '__CENTRAL_HUB__') {
-          setHoveredId('__CENTRAL_HUB__');
+        const farmId = String(props.id || props.farmId || '');
+        if (props.isHub) {
+          setHoveredId(farmId);
           setHoveredTooltip(null);
           return;
         }
 
-        const farmId = String(props.id || props.farmId || '');
-        const matched = latestStateRef.current.visibleFarms.find(
+        const matched = latestStateRef.current.farms.find(
           (f) => f.id === farmId
         );
         if (matched) {
           setHoveredId(matched.id);
           if (map.getZoom() < 11) {
             const projected = map.project([matched.lng, matched.lat]);
+            const badge = getLocationDisplayLabel(
+              matched,
+              latestStateRef.current.customLabels
+            );
             setHoveredTooltip({
               name: matched.name,
+              badge,
               x: projected.x,
               y: projected.y,
             });
@@ -1891,7 +2066,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
       const nextStyle =
         mapStyleMode === 'satellite'
           ? createSatelliteBaseStyle(esriMaxZoomRef.current)
-          : create2DStreetBaseStyle();
+          : create2DStreetBaseStyle(streetFallbackToOsmRef.current);
 
       map.setStyle(nextStyle);
 
@@ -1916,9 +2091,11 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         | maplibregl.GeoJSONSource
         | undefined;
       if (farmsSource) {
-        farmsSource.setData(buildFarmsSourceGeoJSON(farms, centralHub));
+        farmsSource.setData(
+          buildFarmsSourceGeoJSON(farms, centralHub, customLabels)
+        );
       }
-    }, [farms, centralHub, buildFarmsSourceGeoJSON]);
+    }, [farms, centralHub, customLabels, buildFarmsSourceGeoJSON]);
 
     // Cập nhật vòng bán kính an toàn sinh học trên Bản đồ 2D
     useEffect(() => {
@@ -1945,6 +2122,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         activeCategories,
         selectedFarm?.id || null,
         isHubSelected,
+        centralHub?.id || null,
         hoveredId,
         normalizedQuery,
         matchedFarmIds,
@@ -1954,6 +2132,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
       activeCategories,
       selectedFarm,
       isHubSelected,
+      centralHub,
       hoveredId,
       normalizedQuery,
       matchedFarmIds,
@@ -2055,7 +2234,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
             ? activeTargetFarms
             : prevActiveTargetsRef.current;
 
-        if (farmsForArcs.length === 0) {
+        if (!centralHub || farmsForArcs.length === 0) {
           arcModeRef.current = 'idle';
           clearSupplyGeoJSONSources();
           return;
@@ -2320,16 +2499,21 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
           }`}
         />
 
-        {/* Tooltip tên trang trại khi rê chuột vào icon ở mức zoom xa trên Bản đồ 2D */}
+        {/* Tooltip tên trang trại + nhãn mô tả khi rê chuột vào icon ở mức zoom xa trên Bản đồ 2D */}
         {stage === 'map' && hoveredTooltip && (
           <div
-            className="pointer-events-none fixed z-20 -translate-x-1/2 whitespace-nowrap rounded-full border border-white/95 bg-white/95 px-3 py-1 text-[11px] font-extrabold text-[#0f2a24] shadow-md backdrop-blur-md"
+            className="pointer-events-none fixed z-20 flex -translate-x-1/2 items-center gap-1.5 whitespace-nowrap rounded-full border border-white/95 bg-white/95 px-3 py-1 text-[11px] font-extrabold text-[#0f2a24] shadow-md backdrop-blur-md"
             style={{
               left: `${hoveredTooltip.x}px`,
               top: `${Math.max(hoveredTooltip.y - 50, 12)}px`,
             }}
           >
-            {hoveredTooltip.name}
+            <span>{hoveredTooltip.name}</span>
+            {hoveredTooltip.badge && (
+              <span className="rounded-full bg-[#e6f4f1] px-2 py-0.5 text-[9.5px] font-bold text-[#145349]">
+                {hoveredTooltip.badge}
+              </span>
+            )}
           </div>
         )}
 
@@ -2377,7 +2561,9 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
           >
             {mapStyleMode === 'satellite'
               ? 'Nguồn ảnh vệ tinh: Tiles © Esri — Source: Esri, USDA, USGS, GeoEye, IGN & GIS Community'
-              : 'Bản đồ hành chính 2D: © OpenStreetMap contributors © CARTO Voyager'}
+              : usingOsmFallback
+              ? 'Bản đồ hành chính 2D: © OpenStreetMap contributors'
+              : 'Bản đồ hành chính 2D: © OpenStreetMap contributors © CARTO'}
           </div>
         )}
       </div>

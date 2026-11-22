@@ -3,6 +3,7 @@ export type FarmCategory = 'chicken' | 'pig' | 'other';
 export type FarmSubType =
   | 'chicken'
   | 'pig'
+  | 'hub'
   | 'office'
   | 'warehouse'
   | 'wash'
@@ -11,6 +12,8 @@ export type FarmSubType =
 export type IconChoice = 'chicken' | 'pig' | 'auto';
 
 export type FarmIconOverrides = Record<string, 'chicken' | 'pig'>;
+
+export type FarmCustomLabels = Record<string, string>;
 
 export type FarmStatus = 'active' | 'warning' | 'isolated';
 
@@ -27,9 +30,11 @@ export interface Farm {
   type: string;
   /** Nhóm phân loại màu: chicken (cam #fb923c), pig (san hô #fb7185), other (xanh ngọc #14b8a6) */
   category: FarmCategory;
-  /** Nhóm biểu tượng chi tiết (chicken, pig, office, warehouse, wash, other) */
+  /** Nhóm biểu tượng chi tiết (chicken, pig, hub, office, warehouse, wash, other) */
   subType?: FarmSubType;
-  /** Có được nối đường vệt sáng từ Nhà máy Trung tâm hay không */
+  /** Có phải là Nhà Máy Cám (tâm phát đốm sáng cung ứng) từ dữ liệu Google My Maps hay không */
+  isFeedMill?: boolean;
+  /** Có được nối đường vệt sáng từ Nhà Máy Cám hay không */
   isConnectable?: boolean;
   /** Trạng thái vận hành: active (hoạt động), warning (cảnh báo), isolated (cách ly) */
   status: FarmStatus;
@@ -44,9 +49,13 @@ export interface Farm {
   farmKey?: string;
   /** Lựa chọn icon thủ công của Quản trị viên (chicken | pig | auto) */
   manualIcon?: IconChoice;
+  /** Nhãn mô tả tùy chỉnh của Quản trị viên (lưu trên Upstash Redis) */
+  customLabel?: string;
 }
 
 export interface CentralHub {
+  id?: string;
+  farmKey?: string;
   name: string;
   subtitle: string;
   lat: number;

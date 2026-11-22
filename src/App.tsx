@@ -19,6 +19,7 @@ import {
   CentralHub,
   Farm,
   FarmCategory,
+  FarmCustomLabels,
   FarmIconOverrides,
   IconChoice,
   MapStyleMode,
@@ -27,7 +28,9 @@ import {
   TimeOfDay,
 } from './types';
 import {
+  findFeedMill,
   getFarmKey,
+  getLocationDisplayLabel,
   isConnectableFarm,
   resolveFarmIconType,
   resolveFarmSubType,
@@ -165,9 +168,10 @@ function inspectNonKmlPayload(text: string, contentType: string): {
  * và ghi vào console.error.
  */
 async function fetchKmlFromMyMapsId(mid?: string): Promise<string> {
+  const ts = Date.now();
   const apiEndpoint = mid
-    ? `/api/farms?mid=${encodeURIComponent(mid)}`
-    : '/api/farms';
+    ? `/api/farms?mid=${encodeURIComponent(mid)}&t=${ts}`
+    : `/api/farms?t=${ts}`;
 
   const details: string[] = [];
   let hasGoogleLogin = false;
@@ -178,6 +182,7 @@ async function fetchKmlFromMyMapsId(mid?: string): Promise<string> {
     try {
       return await fetch(url, {
         method: 'GET',
+        cache: 'no-store',
         headers: {
           Accept: 'application/xml, text/xml, */*',
         },
@@ -236,10 +241,10 @@ async function fetchKmlFromMyMapsId(mid?: string): Promise<string> {
     throw new MyMapsFetchError(details, hasGoogleLogin);
   }
 
-  // Bước 2: Gọi trực tiếp Google My Maps KML qua 2 CORS proxy dự phòng
+  // Bước 2: Gọi trực tiếp Google My Maps KML qua 2 CORS proxy dự phòng (kèm cache-buster t=Date.now())
   const targetKmlUrl = `https://www.google.com/maps/d/kml?mid=${encodeURIComponent(
     mid
-  )}&forcekml=1`;
+  )}&forcekml=1&t=${ts}`;
 
   const proxies = [
     {
@@ -402,6 +407,22 @@ export default function App() {
     return {};
   });
 
+  // 4b-2. Bảng nhãn mô tả tùy chỉnh (Admin chỉnh sửa, đồng bộ từ Upstash Redis + cache localStorage)
+  const [customLabels, setCustomLabels] = useState<FarmCustomLabels>(() => {
+    try {
+      const saved = localStorage.getItem(APP_CONFIG.customLabelsStorageKey);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === 'object') {
+          return parsed as FarmCustomLabels;
+        }
+      }
+    } catch {
+      // ignore
+    }
+    return {};
+  });
+
   const [isServerIconConnected, setIsServerIconConnected] =
     useState<boolean>(true);
   const [bouncingFarmId, setBouncingFarmId] = useState<string | null>(null);
@@ -419,8 +440,11 @@ export default function App() {
   const [isBulkIconModalOpen, setIsBulkIconModalOpen] = useState(false);
   const [isPositionDiagOpen, setIsPositionDiagOpen] = useState(false);
 
-  // Áp dụng quy tắc kiểm tra toạ độ chính xác 100% + phân loại Icon 3 tầng + kiểm tra isConnectableFarm
+  // Áp dụng quy tắc kiểm tra toạ độ chính xác 100% + nhận diện tự động "Nhà Máy Cám" từ dữ liệu My Maps + phân loại Icon 3 tầng
   const farms = useMemo<Farm[]>(() => {
+    const detectedFeedMill = findFeedMill(rawFarms);
+    const feedMillId = detectedFeedMill?.id || null;
+
     const result: Farm[] = [];
     for (const f of rawFarms) {
       const checked = validateAndNormalizeLatLng(f.lat, f.lng, f.name);
@@ -428,16 +452,27 @@ export default function App() {
       const exactLng = checked ? checked.lng : f.lng;
       const key = getFarmKey(exactLat, exactLng);
       const manual = iconOverrides[key];
+      const customLabel = customLabels[key];
+      const isFeedMill = Boolean(feedMillId && f.id === feedMillId);
+
       const baseFarm: Farm = {
         ...f,
         lat: exactLat,
         lng: exactLng,
         farmKey: key,
         manualIcon: manual || 'auto',
+        isFeedMill,
+        customLabel: customLabel || undefined,
       };
-      const resolvedCategory = resolveFarmIconType(baseFarm, iconOverrides);
-      const resolvedSubType = resolveFarmSubType(baseFarm, iconOverrides);
-      const connectable = isConnectableFarm(baseFarm, iconOverrides);
+      const resolvedCategory = isFeedMill
+        ? 'other'
+        : resolveFarmIconType(baseFarm, iconOverrides);
+      const resolvedSubType = isFeedMill
+        ? 'hub'
+        : resolveFarmSubType(baseFarm, iconOverrides);
+      const connectable = isFeedMill
+        ? false
+        : isConnectableFarm(baseFarm, iconOverrides);
       result.push({
         ...baseFarm,
         category: resolvedCategory,
@@ -446,7 +481,7 @@ export default function App() {
       });
     }
     return result;
-  }, [rawFarms, iconOverrides]);
+  }, [rawFarms, iconOverrides, customLabels]);
 
   const [newlyAddedIds, setNewlyAddedIds] = useState<Set<string>>(new Set());
   const [removingFarms, setRemovingFarms] = useState<Farm[]>([]);
@@ -469,25 +504,24 @@ export default function App() {
     };
   });
 
-  // 6. Toạ độ Nhà máy Trung tâm Thái Việt
-  const [centralHub, setCentralHub] = useState<CentralHub>(() => {
-    try {
-      const savedHub = localStorage.getItem(APP_CONFIG.hubStorageKey);
-      if (savedHub) {
-        const parsed = JSON.parse(savedHub);
-        if (
-          parsed.name &&
-          String(parsed.name).toUpperCase().includes('BIOSPHERE')
-        ) {
-          return APP_CONFIG.centralHub;
-        }
-        return parsed;
-      }
-    } catch {
-      // ignore
-    }
-    return APP_CONFIG.centralHub;
-  });
+  // 6. Tự động lấy "Nhà Máy Cám" trực tiếp từ dữ liệu Google My Maps làm tâm phát đốm sáng (không tạo điểm cứng giả)
+  const feedMillFarm = useMemo<Farm | null>(
+    () => farms.find((f) => f.isFeedMill) || null,
+    [farms]
+  );
+
+  const centralHub = useMemo<CentralHub | null>(() => {
+    if (!feedMillFarm) return null;
+    return {
+      id: feedMillFarm.id,
+      farmKey: feedMillFarm.farmKey,
+      name: feedMillFarm.name,
+      subtitle: feedMillFarm.type || 'Nhà máy cám Thái Việt Corporation',
+      lat: feedMillFarm.lat,
+      lng: feedMillFarm.lng,
+      address: feedMillFarm.description || '',
+    };
+  }, [feedMillFarm]);
 
   // 7. Trạng thái tương tác bản đồ, Nhà máy trung tâm (đường cung), đường cung đơn lẻ & bộ lọc
   const [selectedFarmId, setSelectedFarmId] = useState<string | null>(null);
@@ -611,13 +645,14 @@ export default function App() {
   }, [isAutoTime]);
 
   /**
-   * Đồng bộ bảng lựa chọn icon từ máy chủ Upstash Redis (`GET /api/icons`)
+   * Đồng bộ bảng lựa chọn icon & nhãn mô tả tùy chỉnh từ máy chủ Upstash Redis (`GET /api/icons`)
    * Lưu cache vào localStorage để nếu mất mạng vẫn dùng được bản gần nhất.
    */
   const syncIconsFromServer = useCallback(async () => {
     try {
-      const res = await fetch('/api/icons', {
+      const res = await fetch(`/api/icons?t=${Date.now()}`, {
         method: 'GET',
+        cache: 'no-store',
         headers: {
           Accept: 'application/json',
         },
@@ -633,6 +668,7 @@ export default function App() {
         | {
             ok?: boolean;
             icons?: Record<string, string>;
+            customLabels?: Record<string, string>;
             items?: Array<{ farm_key?: string; icon?: string }>;
           }
         | Array<{ farm_key?: string; icon?: string }>;
@@ -674,6 +710,24 @@ export default function App() {
           );
         } catch {
           // ignore
+        }
+
+        if (data.customLabels && typeof data.customLabels === 'object') {
+          const cleanedLabels: FarmCustomLabels = {};
+          for (const [k, v] of Object.entries(data.customLabels)) {
+            if (typeof v === 'string' && v.trim()) {
+              cleanedLabels[k] = v.trim();
+            }
+          }
+          setCustomLabels(cleanedLabels);
+          try {
+            localStorage.setItem(
+              APP_CONFIG.customLabelsStorageKey,
+              JSON.stringify(cleanedLabels)
+            );
+          } catch {
+            // ignore
+          }
         }
         return true;
       }
@@ -1052,6 +1106,81 @@ export default function App() {
   );
 
   /**
+   * Quản trị viên chỉnh sửa nhãn mô tả hiển thị (Trụ sở chính, Văn phòng, Nhà máy cám, Kho trung tâm, Trại heo, Trại gà...)
+   * Lưu vào Upstash Redis (hash `farm_labels`) qua POST /api/icons để mọi người dùng đều nhìn thấy ngay.
+   * Truyền chuỗi rỗng '' để khôi phục nhãn mặc định.
+   */
+  const handleSaveCustomLabel = useCallback(
+    async (farm: Farm, nextLabel: string) => {
+      const key = farm.farmKey || getFarmKey(farm.lat, farm.lng);
+      const trimmed = nextLabel.trim();
+      const prevLabels = customLabels;
+      const nextLabels: FarmCustomLabels = { ...prevLabels };
+      if (!trimmed) {
+        delete nextLabels[key];
+      } else {
+        nextLabels[key] = trimmed;
+      }
+
+      setCustomLabels(nextLabels);
+      soundEngine.playPing(soundEnabled);
+
+      try {
+        localStorage.setItem(
+          APP_CONFIG.customLabelsStorageKey,
+          JSON.stringify(nextLabels)
+        );
+      } catch {
+        // ignore
+      }
+
+      try {
+        const res = await fetch('/api/icons', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-admin-password': adminPassword,
+            Accept: 'application/json',
+          },
+          body: JSON.stringify({ key, label: trimmed }),
+        });
+
+        const contentType = res.headers.get('content-type') || '';
+        const isJson = contentType.includes('application/json');
+
+        if (res.status === 401) {
+          setCustomLabels(prevLabels);
+          showToast('Sai mật khẩu quản trị, đã hoàn tác thay đổi nhãn.');
+          return;
+        }
+
+        if (res.ok && isJson) {
+          setIsServerIconConnected(true);
+          showToast(
+            trimmed
+              ? `Đã lưu nhãn "${trimmed}" cho mọi người`
+              : 'Đã khôi phục nhãn mặc định cho mọi người'
+          );
+          return;
+        }
+
+        if (res.status === 503 || !isJson) {
+          setIsServerIconConnected(false);
+          showToast('Chưa kết nối máy chủ: nhãn mô tả chỉ lưu trên máy này');
+          return;
+        }
+
+        setCustomLabels(prevLabels);
+        showToast('Lỗi máy chủ khi lưu nhãn mô tả, đã hoàn tác.');
+      } catch {
+        setIsServerIconConnected(false);
+        showToast('Chưa kết nối máy chủ: nhãn mô tả chỉ lưu trên máy này');
+      }
+    },
+    [adminPassword, customLabels, showToast, soundEnabled]
+  );
+
+  /**
    * Xử lý khi người dùng dán link Google My Maps trong panel NẠP DỮ LIỆU và bấm "Đồng bộ"
    */
   const handleSyncFromLinkInput = async (
@@ -1198,8 +1327,9 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleClearSelection, isHubSelected, selectedFarmId, singleArcFarmId]);
 
-  // Bấm vào Icon Nhà máy Trung tâm Thái Việt -> bắn các đường cung từ Nhà máy tới các Trại gà & Trại heo kết nối được
+  // Bấm vào Icon Nhà Máy Cám (điểm thật từ My Maps) -> bắn các đường cung từ Nhà Máy Cám tới các Trại gà & Trại heo
   const handleSelectHub = useCallback(() => {
+    if (!centralHub) return;
     setSelectedFarmId(null);
     setSingleArcFarmId(null);
     setIsHubSelected(true);
@@ -1207,7 +1337,7 @@ export default function App() {
     soundEngine.playPing(soundEnabled);
     soundEngine.playWhoosh(soundEnabled, 1.5);
     mapSceneRef.current?.flyToConnectedOverview();
-  }, [soundEnabled]);
+  }, [centralHub, soundEnabled]);
 
   // Cách vào bản đồ (e): Bấm nút tròn nhỏ "Xem bản đồ chi tiết" ở góc dưới địa cầu hoặc nút la bàn
   const handleEnterMapOverview = useCallback(() => {
@@ -1222,6 +1352,11 @@ export default function App() {
   // Cách vào bản đồ (a): Bấm vào một điểm trang trại trên địa cầu (hoặc trên bản đồ) -> bay tới và mở card
   const handleSelectFarm = useCallback(
     (farm: Farm) => {
+      // Nếu người dùng chọn đúng "Nhà Máy Cám" -> bật luôn mạng lưới cung ứng & thẻ Nhà Máy Cám
+      if (farm.isFeedMill || (centralHub?.id && farm.id === centralHub.id)) {
+        handleSelectHub();
+        return;
+      }
       if (stage === 'globe') {
         setStage('map');
       }
@@ -1233,7 +1368,7 @@ export default function App() {
       soundEngine.playWhoosh(soundEnabled, 1.3);
       mapSceneRef.current?.flyToFarm(farm, 15.8);
     },
-    [stage, soundEnabled]
+    [centralHub, handleSelectHub, stage, soundEnabled]
   );
 
   // Cách vào bản đồ (b): Gõ tìm kiếm rồi nhấn Enter -> bay tới điểm khớp đầu tiên
@@ -1241,17 +1376,22 @@ export default function App() {
     const q = searchQuery.trim().toLowerCase().normalize('NFC');
     if (!q) return;
 
-    const firstMatch = filteredFarms.find(
-      (f) =>
+    const firstMatch = farms.find((f) => {
+      const label = getLocationDisplayLabel(f, customLabels)
+        .toLowerCase()
+        .normalize('NFC');
+      return (
         f.name.toLowerCase().normalize('NFC').includes(q) ||
         f.type.toLowerCase().normalize('NFC').includes(q) ||
+        label.includes(q) ||
         f.description.toLowerCase().normalize('NFC').includes(q)
-    );
+      );
+    });
 
     if (firstMatch) {
       handleSelectFarm(firstMatch);
     } else {
-      showToast(`Không tìm thấy trang trại nào khớp với "${searchQuery}"`);
+      showToast(`Không tìm thấy địa điểm nào khớp với "${searchQuery}"`);
     }
   };
 
@@ -1321,23 +1461,13 @@ export default function App() {
     }
   };
 
-  const handleUpdateCentralHub = (newHub: CentralHub) => {
-    setCentralHub(newHub);
-    try {
-      localStorage.setItem(APP_CONFIG.hubStorageKey, JSON.stringify(newHub));
-    } catch {
-      // ignore
-    }
-    showToast(`Đã cập nhật vị trí "${newHub.name}"`);
-  };
-
   const handleToggleMapStyle = () => {
     setMapStyleMode((prev) => {
       const next = prev === 'satellite' ? 'street' : 'satellite';
       showToast(
         next === 'satellite'
           ? 'Đã chuyển sang nền Ảnh Vệ Tinh (Esri World Imagery)'
-          : 'Đã chuyển sang nền Bản đồ Đường phố sáng (OpenFreeMap Liberty)'
+          : 'Đã chuyển sang nền Bản đồ Đường phố 2D (CARTO Voyager / OpenStreetMap)'
       );
       return next;
     });
@@ -1395,7 +1525,7 @@ export default function App() {
       {/* Vầng sáng ấm nhẹ đi theo con trỏ chuột */}
       <CursorSpotlight disabled={liteMode} />
 
-      {/* Bản đồ Địa cầu 3D tự xoay & Địa hình nổi Terrarium + Chuồng trại 3D */}
+      {/* Bản đồ Địa cầu 3D tự xoay & Bản đồ 2D phẳng nhẹ */}
       <MapScene
         ref={mapSceneRef}
         stage={stage}
@@ -1405,6 +1535,7 @@ export default function App() {
         removingFarms={removingFarms}
         bouncingFarmId={bouncingFarmId}
         centralHub={centralHub}
+        customLabels={customLabels}
         selectedFarm={selectedFarm}
         isHubSelected={isHubSelected}
         singleArcFarmId={singleArcFarmId}
@@ -1450,6 +1581,7 @@ export default function App() {
             logoUrl={logoUrl}
             farms={farms}
             centralHub={centralHub}
+            customLabels={customLabels}
             searchQuery={searchQuery}
             onSearchChange={setSearchQuery}
             onSearchSubmit={handleSearchSubmit}
@@ -1497,6 +1629,7 @@ export default function App() {
           <FarmDetailCard
             farm={selectedFarm}
             centralHub={centralHub}
+            customLabels={customLabels}
             biosecurityRadius={biosecurityRadius}
             logoUrl={logoUrl}
             onClose={handleClearSelection}
@@ -1505,6 +1638,7 @@ export default function App() {
             liteMode={liteMode}
             isAdmin={isAdmin}
             onSelectFarmIcon={handleSelectFarmIcon}
+            onSaveCustomLabel={handleSaveCustomLabel}
             isSingleArcActive={singleArcFarmId === selectedFarm.id}
             onToggleSingleArc={() => {
               setSingleArcFarmId((prev) =>
@@ -1518,17 +1652,21 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      {/* Card thông tin Nhà máy Trung tâm Thái Việt (Khi bấm vào icon Nhà máy Trung tâm) */}
+      {/* Card thông tin Nhà Máy Cám (Khi bấm vào điểm Nhà Máy Cám thật từ My Maps) */}
       <AnimatePresence>
-        {stage !== 'loading' && isHubSelected && !selectedFarm && (
+        {stage !== 'loading' && centralHub && isHubSelected && !selectedFarm && (
           <HubDetailCard
             centralHub={centralHub}
+            feedMillFarm={feedMillFarm}
+            customLabels={customLabels}
             farms={farms}
             activeCategories={activeCategories}
             logoUrl={logoUrl}
             onClose={handleClearSelection}
             onSelectFarm={handleSelectFarm}
             liteMode={liteMode}
+            isAdmin={isAdmin}
+            onSaveCustomLabel={handleSaveCustomLabel}
             mobileSheetSnap={mobileSheetSnap}
             onChangeMobileSheetSnap={setMobileSheetSnap}
           />
@@ -1542,7 +1680,6 @@ export default function App() {
         onImportSuccess={handleImportSuccess}
         currentFarmCount={farms.length}
         centralHub={centralHub}
-        onUpdateCentralHub={handleUpdateCentralHub}
         savedMyMapsLink={savedMyMapsLink}
         onSyncFromLink={handleSyncFromLinkInput}
         onClearSavedLink={handleClearSavedLink}
@@ -1557,14 +1694,16 @@ export default function App() {
         onSubmitPassword={handleAdminLogin}
       />
 
-      {/* Hộp thoại Chọn icon hàng loạt cho Quản trị viên */}
+      {/* Hộp thoại Chọn icon & nhãn mô tả hàng loạt cho Quản trị viên */}
       <BulkIconModal
         isOpen={isBulkIconModalOpen}
         onClose={() => setIsBulkIconModalOpen(false)}
         farms={farms}
+        customLabels={customLabels}
         isServerConnected={isServerIconConnected}
         onSelectFarmIcon={handleSelectFarmIcon}
         onBulkSelectFarmsIcon={handleBulkSelectFarmsIcon}
+        onSaveCustomLabel={handleSaveCustomLabel}
       />
 
       {/* Hộp thoại Kiểm tra vị trí toạ độ 3D cho Quản trị viên */}
@@ -1575,11 +1714,11 @@ export default function App() {
           mapSceneRef.current?.getPositionDiagnostics() || []
         }
         onFlyToPoint={(_lat, _lng, id) => {
-          if (id === 'central-hub') {
+          const found = farms.find((f) => f.id === id);
+          if (found?.isFeedMill || (centralHub?.id && id === centralHub.id)) {
             handleSelectHub();
-          } else {
-            const found = farms.find((f) => f.id === id);
-            if (found) handleSelectFarm(found);
+          } else if (found) {
+            handleSelectFarm(found);
           }
         }}
       />
@@ -1605,7 +1744,7 @@ export default function App() {
         <div className="glass-panel pointer-events-none fixed right-4 bottom-3 z-20 hidden items-center gap-2 rounded-full px-3.5 py-1.5 text-[11px] font-semibold text-[#0f2a24]/80 lg:flex">
           <Sparkles className="h-3.5 w-3.5 text-[#2b8fd0]" />
           <span>
-            Bấm vào Nhà máy Trung tâm để hiện đường kết nối · Bấm Ghim trang trại để xem chi tiết
+            Bấm vào Nhà Máy Cám để hiện đường kết nối · Bấm Ghim trang trại để xem chi tiết
           </span>
         </div>
       )}

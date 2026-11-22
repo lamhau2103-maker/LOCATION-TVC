@@ -37,6 +37,7 @@ import {
   CentralHub,
   Farm,
   FarmCategory,
+  FarmCustomLabels,
   MapStyleMode,
   SyncState,
   TimeOfDay,
@@ -44,6 +45,7 @@ import {
 import { calculateDistanceKm } from '../utils/geo';
 import {
   DropdownLocationItem,
+  getLocationDisplayLabel,
   normalizeMatchText,
   sortLocationsForDropdown,
 } from '../utils/icons';
@@ -55,7 +57,8 @@ interface TopControlHUDProps {
   companyName: string;
   logoUrl: string;
   farms: Farm[];
-  centralHub: CentralHub;
+  centralHub: CentralHub | null;
+  customLabels: FarmCustomLabels;
   searchQuery: string;
   onSearchChange: (q: string) => void;
   onSearchSubmit: () => void;
@@ -107,6 +110,7 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
   logoUrl,
   farms,
   centralHub,
+  customLabels,
   searchQuery,
   onSearchChange,
   onSearchSubmit,
@@ -172,44 +176,45 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
   const pigCount = farms.filter((f) => f.category === 'pig').length;
   const otherCount = farms.filter((f) => f.category === 'other').length;
 
-  const totalDistanceKm = farms.reduce(
-    (acc, f) =>
-      acc + calculateDistanceKm(centralHub.lat, centralHub.lng, f.lat, f.lng),
-    0
-  );
+  const totalDistanceKm = centralHub
+    ? farms.reduce(
+        (acc, f) =>
+          f.isFeedMill || f.id === centralHub.id
+            ? acc
+            : acc +
+              calculateDistanceKm(centralHub.lat, centralHub.lng, f.lat, f.lng),
+        0
+      )
+    : 0;
 
   const isSyncNormal =
     Boolean(syncState.lastSyncedTime) && !syncState.isOfflineFallback;
 
-  // Xây dựng danh sách TẤT CẢ các địa điểm (Nhà máy trung tâm + tất cả trang trại/văn phòng/kho/rửa xe)
+  // Xây dựng danh sách TẤT CẢ các địa điểm THẬT từ Google My Maps (KHÔNG cộng thêm điểm giả)
   // được sắp xếp theo đúng 7 thứ tự ưu tiên bắt buộc từ trên xuống dưới bằng sortLocationsForDropdown
   const sortedAllLocations = React.useMemo(() => {
-    const rawItems: Array<DropdownLocationItem & { farm?: Farm }> = [
-      {
-        id: '__CENTRAL_HUB__',
-        name: centralHub.name,
-        type: centralHub.subtitle || 'Nhà máy trung tâm',
-        category: 'hub',
-        subType: 'hub',
-        lat: centralHub.lat,
-        lng: centralHub.lng,
-        isHub: true,
-      },
-      ...farms.map((f) => ({
+    const rawItems: Array<
+      DropdownLocationItem & { farm: Farm; displayLabel: string }
+    > = farms.map((f) => {
+      const isFeedMill = Boolean(
+        f.isFeedMill || f.subType === 'hub' || (centralHub && f.id === centralHub.id)
+      );
+      return {
         id: f.id,
         name: f.name,
         type: f.type,
-        category: f.category,
-        subType: f.subType || f.category,
+        category: isFeedMill ? 'hub' : f.category,
+        subType: isFeedMill ? 'hub' : f.subType || f.category,
         lat: f.lat,
         lng: f.lng,
-        isHub: false,
+        isHub: isFeedMill,
         farm: f,
-      })),
-    ];
+        displayLabel: getLocationDisplayLabel(f, customLabels),
+      };
+    });
 
     return sortLocationsForDropdown(rawItems);
-  }, [farms, centralHub]);
+  }, [farms, centralHub, customLabels]);
 
   // Lọc nhanh danh sách khi người dùng gõ chữ (nếu chưa gõ gì thì hiển thị TẤT CẢ các điểm)
   const filteredDropdownLocations = React.useMemo(() => {
@@ -217,7 +222,7 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
     if (!normQ) return sortedAllLocations;
     return sortedAllLocations.filter((item) => {
       const hay = normalizeMatchText(
-        `${item.name} ${item.type || ''} ${item.groupLabel || ''}`
+        `${item.name} ${item.type || ''} ${item.groupLabel || ''} ${item.displayLabel || ''}`
       );
       return hay.includes(normQ);
     });
@@ -229,7 +234,7 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
     setIsLocationDropdownOpen(false);
     setIsMobileSearchExpanded(false);
     onSearchChange('');
-    if (item.isHub || item.id === '__CENTRAL_HUB__') {
+    if (item.isHub) {
       onFlyToHub();
     } else if (item.farm) {
       onSelectFarm(item.farm);
@@ -382,20 +387,14 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
                           )}
                         </div>
                       </div>
-                      <span className="shrink-0 rounded-full bg-emerald-950/[0.05] px-2 py-0.5 text-[10px] font-bold text-emerald-950/65">
-                        {item.isHub
-                          ? 'Nhà máy TT'
-                          : item.category === 'pig'
-                          ? 'Trại heo'
-                          : item.category === 'chicken'
-                          ? 'Trại gà'
-                          : item.subType === 'office'
-                          ? 'Văn phòng'
-                          : item.subType === 'warehouse'
-                          ? 'Kho'
-                          : item.subType === 'wash'
-                          ? 'Rửa xe'
-                          : 'Khác'}
+                      <span
+                        className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                          item.isHub
+                            ? 'bg-[#2b8fd0]/15 text-[#2b8fd0]'
+                            : 'bg-emerald-950/[0.05] text-emerald-950/65'
+                        }`}
+                      >
+                        {item.displayLabel}
                       </span>
                     </button>
                   </React.Fragment>
@@ -849,15 +848,6 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
               )}
             </button>
 
-            <button
-              type="button"
-              onClick={onFlyToHub}
-              className="hidden items-center gap-1 text-[11px] font-extrabold text-[#2b8fd0] hover:underline md:inline-flex cursor-pointer"
-            >
-              <CuteCategoryIcon category="hub" className="h-3.5 w-3.5" />
-              <span>Nhà máy TT</span>
-            </button>
-
             <div className="h-4 w-px bg-emerald-950/15" />
 
             <span className="text-[11px] font-extrabold text-[#0f2a24]">
@@ -1116,17 +1106,6 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
                 <span className="font-display font-extrabold text-[#0f2a24]">
                   {companyName}
                 </span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsMobileStatsExpanded(false);
-                    onFlyToHub();
-                  }}
-                  className="inline-flex items-center gap-1 font-extrabold text-[#2b8fd0]"
-                >
-                  <CuteCategoryIcon category="hub" className="h-3.5 w-3.5" />
-                  <span>Xem Nhà máy TT</span>
-                </button>
               </div>
               <div className="grid grid-cols-4 gap-2 text-center">
                 <div className="rounded-xl bg-white/75 p-1.5">
@@ -1177,15 +1156,6 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
         >
           {/* Hàng chip lọc cuộn ngang ngay phía trên Bottom Dock */}
           <div className="pointer-events-auto flex items-center justify-center gap-1.5 overflow-x-auto py-0.5 no-scrollbar">
-            <button
-              type="button"
-              onClick={onFlyToHub}
-              className="glass-panel flex min-h-[38px] shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-extrabold text-[#2b8fd0] shadow-xs"
-            >
-              <CuteCategoryIcon category="hub" className="h-4 w-4" />
-              <span>Nhà máy TT</span>
-            </button>
-
             {categoryButtons.map((btn) => {
               const isActive = activeCategories[btn.key];
               return (
@@ -1340,20 +1310,9 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
                   )}
                 </motion.button>
 
-                <div>
+                <div className="flex items-center">
                   <div className="font-display text-xs font-extrabold tracking-tight text-[#0f2a24] sm:text-sm">
                     {companyName}
-                  </div>
-                  <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px] font-medium text-emerald-950/70">
-                    <button
-                      type="button"
-                      onClick={onFlyToHub}
-                      title="Bấm để xem mạng lưới kết nối từ Nhà máy Trung tâm"
-                      className="inline-flex items-center gap-1 font-bold text-[#2b8fd0] hover:text-[#d9261c] hover:underline cursor-pointer"
-                    >
-                      <CuteCategoryIcon category="hub" className="h-3.5 w-3.5" />
-                      {centralHub.name}
-                    </button>
                   </div>
                 </div>
               </div>
@@ -1418,16 +1377,24 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
                   </div>
                 </div>
 
-                <div className="hidden h-7 w-px bg-emerald-950/10 lg:block" />
+                {centralHub && (
+                  <>
+                    <div className="hidden h-7 w-px bg-emerald-950/10 lg:block" />
 
-                <div className="hidden lg:block">
-                  <div className="text-[11px] font-medium text-emerald-950/65">
-                    Tổng khoảng cách
-                  </div>
-                  <div className="text-base font-extrabold text-[#2b8fd0]">
-                    <CountUp end={totalDistanceKm} decimals={1} suffix=" km" />
-                  </div>
-                </div>
+                    <div className="hidden lg:block">
+                      <div className="text-[11px] font-medium text-emerald-950/65">
+                        Tổng khoảng cách
+                      </div>
+                      <div className="text-base font-extrabold text-[#2b8fd0]">
+                        <CountUp
+                          end={totalDistanceKm}
+                          decimals={1}
+                          suffix=" km"
+                        />
+                      </div>
+                    </div>
+                  </>
+                )}
               </div>
             </div>
           </motion.div>

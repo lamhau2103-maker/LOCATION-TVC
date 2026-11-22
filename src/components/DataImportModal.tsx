@@ -27,8 +27,7 @@ interface DataImportModalProps {
   onClose: () => void;
   onImportSuccess: (result: ParseResult) => void;
   currentFarmCount: number;
-  centralHub: CentralHub;
-  onUpdateCentralHub: (hub: CentralHub) => void;
+  centralHub: CentralHub | null;
   savedMyMapsLink: string;
   onSyncFromLink: (
     rawInput: string
@@ -43,7 +42,7 @@ interface DataImportModalProps {
  * - Vùng kéo-thả tệp .KML / .CSV / .GeoJSON
  * - Khối "ĐỒNG BỘ TỪ LINK GOOGLE MY MAPS" ngay dưới vùng kéo-thả
  * - Nút "Tải logo" dự phòng (lưu base64 vào localStorage)
- * - Dấu thương hiệu nhỏ mờ nhẹ ở chân panel
+ * - Tự động nhận diện "Nhà Máy Cám" trực tiếp từ dữ liệu Google My Maps
  */
 export const DataImportModal: React.FC<DataImportModalProps> = ({
   isOpen,
@@ -51,7 +50,6 @@ export const DataImportModal: React.FC<DataImportModalProps> = ({
   onImportSuccess,
   currentFarmCount,
   centralHub,
-  onUpdateCentralHub,
   savedMyMapsLink,
   onSyncFromLink,
   onClearSavedLink,
@@ -66,12 +64,6 @@ export const DataImportModal: React.FC<DataImportModalProps> = ({
   // State khối Đồng bộ từ link Google My Maps
   const [linkInput, setLinkInput] = useState(savedMyMapsLink);
   const [isSyncingLink, setIsSyncingLink] = useState(false);
-
-  // State chỉnh sửa nhanh Nhà máy Trung tâm
-  const [hubName, setHubName] = useState(centralHub.name);
-  const [hubLat, setHubLat] = useState(String(centralHub.lat));
-  const [hubLng, setHubLng] = useState(String(centralHub.lng));
-  const [hubSavedMsg, setHubSavedMsg] = useState(false);
   const [logoError, setLogoError] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -80,12 +72,6 @@ export const DataImportModal: React.FC<DataImportModalProps> = ({
   useEffect(() => {
     setLinkInput(savedMyMapsLink);
   }, [savedMyMapsLink, isOpen]);
-
-  useEffect(() => {
-    setHubName(centralHub.name);
-    setHubLat(String(centralHub.lat));
-    setHubLng(String(centralHub.lng));
-  }, [centralHub]);
 
   if (!isOpen) return null;
 
@@ -180,31 +166,6 @@ export const DataImportModal: React.FC<DataImportModalProps> = ({
       }
     };
     reader.readAsDataURL(file);
-  };
-
-  const handleSaveHub = (e: React.FormEvent) => {
-    e.preventDefault();
-    const lat = parseFloat(hubLat);
-    const lng = parseFloat(hubLng);
-    if (
-      Number.isNaN(lat) ||
-      Number.isNaN(lng) ||
-      lat < -90 ||
-      lat > 90 ||
-      lng < -180 ||
-      lng > 180
-    ) {
-      setErrorMsg('Toạ độ Nhà máy Trung tâm không hợp lệ.');
-      return;
-    }
-    onUpdateCentralHub({
-      ...centralHub,
-      name: hubName.trim() || centralHub.name,
-      lat,
-      lng,
-    });
-    setHubSavedMsg(true);
-    setTimeout(() => setHubSavedMsg(false), 2000);
   };
 
   return (
@@ -419,67 +380,32 @@ export const DataImportModal: React.FC<DataImportModalProps> = ({
           </span>
         </div>
 
-        {/* Cấu hình nhanh Nhà Máy Trung Tâm */}
-        <form
-          onSubmit={handleSaveHub}
-          className="rounded-2xl border border-[#2b8fd0]/20 bg-sky-50/50 p-3.5"
-        >
-          <div className="mb-2.5 flex items-center justify-between">
-            <span className="text-xs font-extrabold tracking-wider text-[#2b8fd0] uppercase">
-              Toạ độ Nhà máy Trung tâm (Điểm gốc đường cung ArcLayer)
+        {/* Trạng thái nhận diện Nhà Máy Cám tự động từ dữ liệu My Maps */}
+        <div className="rounded-2xl border border-[#2b8fd0]/20 bg-sky-50/50 p-3.5 text-xs">
+          <div className="flex items-center justify-between gap-2">
+            <span className="font-extrabold tracking-wider text-[#2b8fd0] uppercase">
+              Tâm phát đốm sáng cung ứng (Tự động từ My Maps)
             </span>
-            {hubSavedMsg && (
-              <span className="flex items-center gap-1 text-xs font-bold text-[#059669]">
+            {centralHub && (
+              <span className="flex items-center gap-1 font-bold text-[#059669]">
                 <CheckCircle2 className="h-3.5 w-3.5" />
-                Đã cập nhật
+                Đã nhận diện
               </span>
             )}
           </div>
-
-          <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
-            <div className="sm:col-span-1">
-              <label className="mb-1 block text-[11px] font-bold text-[#0f2a24]/70">
-                Tên nhà máy
-              </label>
-              <input
-                type="text"
-                value={hubName}
-                onChange={(e) => setHubName(e.target.value)}
-                className="w-full rounded-xl border border-emerald-950/15 bg-white px-3 py-1.5 text-xs font-semibold text-[#0f2a24] focus:border-[#2b8fd0] focus:outline-none"
-              />
-            </div>
-            <div>
-              <label className="mb-1 block text-[11px] font-bold text-[#0f2a24]/70">
-                Vĩ độ (Lat)
-              </label>
-              <input
-                type="text"
-                value={hubLat}
-                onChange={(e) => setHubLat(e.target.value)}
-                className="font-mono-tabular w-full rounded-xl border border-emerald-950/15 bg-white px-3 py-1.5 text-xs font-semibold text-[#0f2a24] focus:border-[#2b8fd0] focus:outline-none"
-              />
-            </div>
-            <div>
-              <label className="mb-1 block text-[11px] font-bold text-[#0f2a24]/70">
-                Kinh độ (Lng)
-              </label>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={hubLng}
-                  onChange={(e) => setHubLng(e.target.value)}
-                  className="font-mono-tabular w-full rounded-xl border border-emerald-950/15 bg-white px-3 py-1.5 text-xs font-semibold text-[#0f2a24] focus:border-[#2b8fd0] focus:outline-none"
-                />
-                <button
-                  type="submit"
-                  className="rounded-xl bg-[#2b8fd0] px-3.5 py-1.5 text-xs font-bold text-white transition-colors hover:bg-[#1e74ad] cursor-pointer shrink-0"
-                >
-                  Lưu
-                </button>
-              </div>
-            </div>
-          </div>
-        </form>
+          {centralHub ? (
+            <p className="mt-1 font-semibold text-[#0f2a24]/85">
+              {centralHub.name}{' '}
+              <span className="font-mono-tabular text-[11px] text-[#2b8fd0]">
+                ({centralHub.lat.toFixed(6)}, {centralHub.lng.toFixed(6)})
+              </span>
+            </p>
+          ) : (
+            <p className="mt-1 text-[11px] font-medium text-[#0f2a24]/65">
+              Hệ thống tự động lấy điểm có tên chứa &ldquo;Nhà Máy Cám&rdquo; trong dữ liệu Google My Maps làm tâm phát luồng cung ứng.
+            </p>
+          )}
+        </div>
 
         {/* Dấu thương hiệu nhỏ mờ nhẹ ở chân Panel nạp dữ liệu */}
         <div className="mt-4 flex items-center justify-center gap-2 border-t border-emerald-950/10 pt-3 opacity-65">
