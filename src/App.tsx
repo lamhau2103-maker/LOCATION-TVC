@@ -1470,7 +1470,7 @@ export default function App() {
             ? 'Ảnh Vệ tinh (Esri World Imagery)'
             : next === 'terrain'
             ? 'Bản đồ Địa hình (Esri World Topo)'
-            : 'Bản đồ đường (OpenFreeMap Liberty)';
+            : 'Bản đồ Đường';
         showToast(`Đã chuyển sang ${label}`);
         return next;
       });
@@ -1527,8 +1527,8 @@ export default function App() {
 
   return (
     <div className="relative h-[100dvh] w-screen overflow-hidden bg-[#e6f4f1] select-none">
-      {/* Vầng sáng ấm nhẹ đi theo con trỏ chuột */}
-      <CursorSpotlight disabled={liteMode} />
+      {/* Vầng sáng ấm nhẹ đi theo con trỏ chuột (CHỈ bật trên Địa cầu 3D, tắt hoàn toàn trên Bản đồ 2D) */}
+      <CursorSpotlight disabled={liteMode || stage === 'map'} />
 
       {/* Bản đồ Địa cầu 3D tự xoay & Bản đồ 2D phẳng nhẹ */}
       <MapScene

@@ -1052,135 +1052,187 @@ export function createFarmPinCanvasSync(
   const palette =
     subType === 'chicken'
       ? {
-          top: '#fdba74',
+          top: '#ffedd5',
+          upper: '#fb923c',
           mid: '#f97316',
-          bot: '#c2410c',
+          bot: '#9a3412',
           rim: '#ffffff',
-          halo: '#facc15',
+          outerStroke: 'rgba(154, 52, 18, 0.35)',
           dot: '#ea580c',
         }
       : subType === 'pig'
       ? {
-          top: '#fda4af',
+          top: '#ffe4e6',
+          upper: '#fb7185',
           mid: '#f43f5e',
-          bot: '#be123c',
+          bot: '#9f1239',
           rim: '#ffffff',
-          halo: '#facc15',
+          outerStroke: 'rgba(136, 19, 55, 0.35)',
           dot: '#e11d48',
         }
       : subType === 'hub'
       ? {
-          top: '#38bdf8',
+          top: '#7dd3fc',
+          upper: '#38bdf8',
           mid: '#2563eb',
           bot: '#1e3a8a',
           rim: '#facc15',
-          halo: '#fde047',
-          dot: '#2563eb',
+          outerStroke: 'rgba(180, 83, 9, 0.55)',
+          dot: '#f59e0b',
         }
       : {
-          top: '#5eead4',
+          top: '#ccfbf1',
+          upper: '#2dd4bf',
           mid: '#14b8a6',
-          bot: '#0f766e',
+          bot: '#115e59',
           rim: '#ffffff',
-          halo: '#facc15',
+          outerStroke: 'rgba(17, 94, 89, 0.35)',
           dot: '#0d9488',
         };
 
-  // 1. Vòng hào quang phát sáng cho Nhà Máy Cám hoặc điểm đang được chọn
+  // 1. Bóng đổ mềm elip dưới chân ghim tạo hiệu ứng nổi khối 3D rõ nét trên mọi nền bản đồ
+  ctx.save();
+  const groundShadow = ctx.createRadialGradient(32, 60.4, 0.8, 32, 60.4, 11.5);
+  groundShadow.addColorStop(0, 'rgba(15, 23, 42, 0.42)');
+  groundShadow.addColorStop(0.5, 'rgba(15, 23, 42, 0.18)');
+  groundShadow.addColorStop(1, 'rgba(15, 23, 42, 0)');
+  ctx.fillStyle = groundShadow;
+  ctx.beginPath();
+  ctx.ellipse(32, 60.4, 11.5, 3.2, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+
+  // 2. Vòng hào quang phát sáng cho Nhà Máy Cám hoặc điểm đang được chọn
   if (isSelected || subType === 'hub') {
     ctx.save();
-    const haloGrad = ctx.createRadialGradient(32, 23.8, 17.5, 32, 23.8, 25.0);
+    const haloGrad = ctx.createRadialGradient(32, 23.4, 17.5, 32, 23.4, 26.8);
     if (subType === 'hub') {
-      haloGrad.addColorStop(0, 'rgba(250, 204, 21, 0.52)');
-      haloGrad.addColorStop(0.6, 'rgba(56, 189, 248, 0.28)');
-      haloGrad.addColorStop(1, 'rgba(56, 189, 248, 0)');
+      haloGrad.addColorStop(0, 'rgba(250, 204, 21, 0.65)');
+      haloGrad.addColorStop(0.55, 'rgba(250, 204, 21, 0.28)');
+      haloGrad.addColorStop(1, 'rgba(250, 204, 21, 0)');
     } else {
-      haloGrad.addColorStop(0, 'rgba(250, 204, 21, 0.55)');
+      haloGrad.addColorStop(0, 'rgba(250, 204, 21, 0.68)');
+      haloGrad.addColorStop(0.6, 'rgba(250, 204, 21, 0.25)');
       haloGrad.addColorStop(1, 'rgba(250, 204, 21, 0)');
     }
     ctx.fillStyle = haloGrad;
     ctx.beginPath();
-    ctx.arc(32, 23.8, 24.8, 0, Math.PI * 2);
+    ctx.arc(32, 23.4, 26.8, 0, Math.PI * 2);
     ctx.fill();
     ctx.restore();
   }
 
-  // 2. Đường bao thân ghim giọt nước 3D chuẩn (đỉnh nhọn tại x=32, y=62.6)
+  // 3. Đường bao thân ghim giọt nước 3D chuẩn (đỉnh nhọn tại x=32, y=60.4)
   const tracePinBody = () => {
     ctx.beginPath();
-    ctx.moveTo(32, 62.6);
-    ctx.bezierCurveTo(28.5, 53.0, 11.4, 38.6, 11.4, 23.8);
-    ctx.arc(32, 23.8, 20.6, Math.PI, 0, false);
-    ctx.bezierCurveTo(52.6, 38.6, 35.5, 53.0, 32, 62.6);
+    ctx.moveTo(32, 60.4);
+    ctx.bezierCurveTo(28.0, 50.8, 11.2, 37.8, 11.2, 23.4);
+    ctx.arc(32, 23.4, 20.8, Math.PI, 0, false);
+    ctx.bezierCurveTo(52.8, 37.8, 36.0, 50.8, 32, 60.4);
     ctx.closePath();
   };
 
-  // Đổ bóng 3D mềm dưới thân ghim
+  // Thân ghim giọt nước đổ khối gradient sáng trên → đậm dưới + bóng nổi 3D
   ctx.save();
-  ctx.shadowColor = 'rgba(15, 23, 42, 0.34)';
-  ctx.shadowBlur = 3.2;
+  ctx.shadowColor = 'rgba(15, 23, 42, 0.36)';
+  ctx.shadowBlur = 4.2;
   ctx.shadowOffsetX = 0;
-  ctx.shadowOffsetY = 1.6;
+  ctx.shadowOffsetY = 2.2;
 
-  const pinGrad = ctx.createLinearGradient(20, 4, 44, 60);
+  const pinGrad = ctx.createLinearGradient(22, 3, 42, 58);
   pinGrad.addColorStop(0, palette.top);
-  pinGrad.addColorStop(0.45, palette.mid);
+  pinGrad.addColorStop(0.22, palette.upper);
+  pinGrad.addColorStop(0.62, palette.mid);
   pinGrad.addColorStop(1, palette.bot);
   ctx.fillStyle = pinGrad;
   tracePinBody();
   ctx.fill();
   ctx.restore();
 
-  // Viền ngoài trắng dày sắc nét (hoặc viền vàng kim sang trọng cho Nhà Máy Cám)
+  // Viền ngoài trắng dày 3.6px (hoặc viền vàng kim 4.0px nổi bật cho Nhà Máy Cám)
   ctx.save();
-  ctx.strokeStyle = palette.rim;
-  ctx.lineWidth = subType === 'hub' ? 2.6 : 2.2;
   ctx.lineJoin = 'round';
+  // Đường viền mảnh tương phản bên ngoài cùng giúp tách nền cực sắc trên bản đồ sáng
+  ctx.strokeStyle = palette.outerStroke;
+  ctx.lineWidth = subType === 'hub' ? 5.2 : 4.6;
+  tracePinBody();
+  ctx.stroke();
+
+  ctx.strokeStyle = palette.rim;
+  ctx.lineWidth = subType === 'hub' ? 3.8 : 3.4;
   tracePinBody();
   ctx.stroke();
   ctx.restore();
 
-  // Vệt bóng phản chiếu specular 3D ở góc trên trái vành ghim
+  // 4. Khối bóng 3D & điểm highlight sáng góc trên trái bên trong thân ghim
   ctx.save();
   tracePinBody();
   ctx.clip();
-  const shineGrad = ctx.createLinearGradient(14, 5, 36, 26);
-  shineGrad.addColorStop(0, 'rgba(255, 255, 255, 0.52)');
-  shineGrad.addColorStop(0.55, 'rgba(255, 255, 255, 0.08)');
+
+  // Bóng tối nhẹ ở viền dưới tạo độ dày khối cầu 3D
+  const lowerShade = ctx.createLinearGradient(32, 36, 32, 61);
+  lowerShade.addColorStop(0, 'rgba(15, 23, 42, 0)');
+  lowerShade.addColorStop(1, 'rgba(15, 23, 42, 0.28)');
+  ctx.fillStyle = lowerShade;
+  ctx.fillRect(10, 36, 44, 26);
+
+  // Vệt bóng phản chiếu lớn góc trên trái
+  const shineGrad = ctx.createLinearGradient(13, 4, 34, 22);
+  shineGrad.addColorStop(0, 'rgba(255, 255, 255, 0.62)');
+  shineGrad.addColorStop(0.55, 'rgba(255, 255, 255, 0.14)');
   shineGrad.addColorStop(1, 'rgba(255, 255, 255, 0)');
   ctx.fillStyle = shineGrad;
   ctx.beginPath();
-  ctx.ellipse(24.5, 11.5, 15.5, 8.5, -0.45, 0, Math.PI * 2);
+  ctx.ellipse(23.2, 10.6, 13.5, 6.8, -0.48, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Điểm highlight nhỏ sắc nét ở góc trên trái (hiệu ứng men bóng 3D)
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.88)';
+  ctx.beginPath();
+  ctx.ellipse(19.2, 10.2, 3.2, 1.5, -0.62, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(15.6, 14.2, 1.15, 0, Math.PI * 2);
   ctx.fill();
   ctx.restore();
 
-  // 3. Khoang tròn trắng ngọc trai bên trong (lõm nhẹ 3D để tôn biểu tượng)
+  // 5. Khoang tròn trắng tinh khiết ở giữa (viền lõm 3D để tôn biểu tượng Heo / Gà / Văn phòng / Nhà Máy Cám)
   ctx.save();
-  const innerBgGrad = ctx.createRadialGradient(29, 19.5, 1.5, 32, 23.8, 16.2);
+  ctx.shadowColor = 'rgba(15, 23, 42, 0.22)';
+  ctx.shadowBlur = 2.0;
+  ctx.shadowOffsetY = 0.8;
+  const innerBgGrad = ctx.createRadialGradient(29, 19.2, 1.5, 32, 23.4, 15.6);
   innerBgGrad.addColorStop(0, '#ffffff');
-  innerBgGrad.addColorStop(0.84, '#f8fafc');
+  innerBgGrad.addColorStop(0.84, '#ffffff');
   innerBgGrad.addColorStop(1, '#e2e8f0');
   ctx.fillStyle = innerBgGrad;
   ctx.beginPath();
-  ctx.arc(32, 23.8, 15.6, 0, Math.PI * 2);
+  ctx.arc(32, 23.4, 15.0, 0, Math.PI * 2);
   ctx.fill();
+  ctx.restore();
 
+  ctx.save();
   ctx.strokeStyle =
-    subType === 'hub' ? 'rgba(250, 204, 21, 0.85)' : 'rgba(255, 255, 255, 0.9)';
-  ctx.lineWidth = 1.2;
+    subType === 'hub' ? 'rgba(250, 204, 21, 0.95)' : 'rgba(255, 255, 255, 0.95)';
+  ctx.lineWidth = 1.4;
+  ctx.beginPath();
+  ctx.arc(32, 23.4, 15.0, 0, Math.PI * 2);
   ctx.stroke();
   ctx.restore();
 
-  // 4. Vẽ biểu tượng 3D siêu nét bên trong khoang tròn
-  drawInnerPictogram2D(ctx, subType);
-
-  // 5. Chấm neo nhỏ gọn ngay đúng đỉnh mũi ghim (32, 62.4)
+  // 6. Vẽ biểu tượng 3D siêu nét bên trong khoang tròn trắng
   ctx.save();
-  ctx.fillStyle = '#ffffff';
-  ctx.strokeStyle = palette.dot;
-  ctx.lineWidth = 1.1;
+  ctx.translate(0, -0.4);
+  drawInnerPictogram2D(ctx, subType);
+  ctx.restore();
+
+  // 7. Chấm neo nhỏ gọn ngay đúng đầu nhọn (32, 61.3) chỉ chính xác 100% tọa độ địa lý
+  ctx.save();
+  ctx.fillStyle = palette.dot;
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = 1.3;
   ctx.beginPath();
-  ctx.arc(32, 62.4, 1.45, 0, Math.PI * 2);
+  ctx.arc(32, 61.3, 2.0, 0, Math.PI * 2);
   ctx.fill();
   ctx.stroke();
   ctx.restore();
@@ -1282,14 +1334,17 @@ export function addSingleFarmIconToMap(
     }
 
     if (!imageId.startsWith('farm-icon-')) return;
-    const rawType = imageId.replace('farm-icon-', '') as FarmSubType | 'hub';
-    const st: FarmSubType | 'hub' = VALID_SUBTYPES.includes(rawType)
-      ? rawType
+    const isSelectedVariant = imageId.endsWith('-selected');
+    const cleaned = imageId
+      .replace('farm-icon-', '')
+      .replace(/-selected$/, '') as FarmSubType | 'hub';
+    const st: FarmSubType | 'hub' = VALID_SUBTYPES.includes(cleaned)
+      ? cleaned
       : 'other';
 
     const { imageData } = createFarmPinCanvasSync(
       st,
-      st === 'hub',
+      isSelectedVariant || st === 'hub',
       MAPLIBRE_ICON_PIXEL_SCALE
     );
     map.addImage(imageId, imageData, {
@@ -1301,19 +1356,21 @@ export function addSingleFarmIconToMap(
 }
 
 /**
- * Cập nhật nóng lại icon Nhà Máy Cám (farm-icon-hub) trên MapLibre GL ngay khi ảnh /logo.png tải xong
+ * Cập nhật nóng lại icon Nhà Máy Cám (farm-icon-hub & farm-icon-hub-selected) trên MapLibre GL ngay khi ảnh /logo.png tải xong
  */
 export function refreshHubIconOnMap(map: maplibregl.Map): void {
   addSingleFarmIconToMap(map, 'farm-icon-hub', true);
+  addSingleFarmIconToMap(map, 'farm-icon-hub-selected', true);
   addSingleFarmIconToMap(map, 'marker-factory', true);
 }
 
 /**
- * Đăng ký ĐỒNG BỘ toàn bộ bộ ảnh icon 256x256px + hạt phát sáng vào MapLibre GL ngay lập tức
+ * Đăng ký ĐỒNG BỘ toàn bộ bộ ảnh icon 256x256px (cả trạng thái thường và đang chọn) + hạt phát sáng vào MapLibre GL ngay lập tức
  */
 export function registerMapLibreFarmIcons(map: maplibregl.Map): void {
   for (const st of VALID_SUBTYPES) {
     addSingleFarmIconToMap(map, `farm-icon-${st}`);
+    addSingleFarmIconToMap(map, `farm-icon-${st}-selected`);
   }
   for (const aliasId of Object.keys(MARKER_ALIAS_MAP)) {
     addSingleFarmIconToMap(map, aliasId);
