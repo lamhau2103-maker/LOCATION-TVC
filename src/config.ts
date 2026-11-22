@@ -152,6 +152,7 @@ export const APP_CONFIG = {
   customLogoStorageKey: 'thaiviet_corp_custom_logo_v1',
   iconOverridesStorageKey: 'thaiviet_corp_icon_overrides_v1',
   adminSessionStorageKey: 'thaiviet_corp_admin_session_v1',
+  userPrefsStorageKey: 'thaiviet_corp_user_prefs_v1',
 };
 
 /**

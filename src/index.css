@@ -316,3 +316,12 @@ body {
   color: #2b8fd0 !important;
   font-weight: 600;
 }
+
+/* Ẩn thanh cuộn ngang cho hàng chip lọc trên điện thoại */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}

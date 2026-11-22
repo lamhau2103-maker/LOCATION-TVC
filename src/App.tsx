@@ -485,15 +485,55 @@ export default function App() {
     other: true,
   });
 
-  const [biosecurityRadius, setBiosecurityRadius] = useState<number>(
-    APP_CONFIG.defaultBiosecurityRadiusMeters
+  // 7b. Khôi phục & lưu các tùy chỉnh cá nhân của người dùng (nền, thời gian, chế độ nhẹ, âm thanh, bán kính) vào localStorage
+  const savedUserPrefs = useMemo(() => {
+    try {
+      const raw = localStorage.getItem(APP_CONFIG.userPrefsStorageKey);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') {
+          return parsed as {
+            mapStyleMode?: MapStyleMode;
+            timeOfDay?: TimeOfDay;
+            isAutoTime?: boolean;
+            liteMode?: boolean;
+            soundEnabled?: boolean;
+            biosecurityRadius?: number;
+          };
+        }
+      }
+    } catch {
+      // ignore
+    }
+    return {};
+  }, []);
+
+  const [biosecurityRadius, setBiosecurityRadius] = useState<number>(() =>
+    typeof savedUserPrefs.biosecurityRadius === 'number'
+      ? savedUserPrefs.biosecurityRadius
+      : APP_CONFIG.defaultBiosecurityRadiusMeters
   );
 
-  const [mapStyleMode, setMapStyleMode] = useState<MapStyleMode>('satellite');
-  const [timeOfDay, setTimeOfDay] = useState<TimeOfDay>('day');
-  const [isAutoTime, setIsAutoTime] = useState<boolean>(false);
-  const [liteMode, setLiteMode] = useState<boolean>(() => detectLowEndDevice());
-  const [soundEnabled, setSoundEnabled] = useState<boolean>(false);
+  const [mapStyleMode, setMapStyleMode] = useState<MapStyleMode>(() =>
+    savedUserPrefs.mapStyleMode === 'street' ? 'street' : 'satellite'
+  );
+  const [timeOfDay, setTimeOfDay] = useState<TimeOfDay>(() =>
+    savedUserPrefs.timeOfDay &&
+    savedUserPrefs.timeOfDay in APP_CONFIG.timePresets
+      ? savedUserPrefs.timeOfDay
+      : 'day'
+  );
+  const [isAutoTime, setIsAutoTime] = useState<boolean>(() =>
+    Boolean(savedUserPrefs.isAutoTime)
+  );
+  const [liteMode, setLiteMode] = useState<boolean>(() =>
+    typeof savedUserPrefs.liteMode === 'boolean'
+      ? savedUserPrefs.liteMode
+      : detectLowEndDevice()
+  );
+  const [soundEnabled, setSoundEnabled] = useState<boolean>(() =>
+    Boolean(savedUserPrefs.soundEnabled)
+  );
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
@@ -501,6 +541,31 @@ export default function App() {
   const [tourIndex, setTourIndex] = useState(0);
 
   const mapSceneRef = useRef<MapSceneHandle | null>(null);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        APP_CONFIG.userPrefsStorageKey,
+        JSON.stringify({
+          mapStyleMode,
+          timeOfDay,
+          isAutoTime,
+          liteMode,
+          soundEnabled,
+          biosecurityRadius,
+        })
+      );
+    } catch {
+      // ignore
+    }
+  }, [
+    mapStyleMode,
+    timeOfDay,
+    isAutoTime,
+    liteMode,
+    soundEnabled,
+    biosecurityRadius,
+  ]);
 
   const showToast = useCallback((msg: string) => {
     setToastMessage(msg);
