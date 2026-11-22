@@ -1,5 +1,50 @@
-import { detectFarmCategory, detectFarmStatus } from '../config';
+import { detectFarmStatus } from '../config';
 import { Farm, ParseResult } from '../types';
+import { resolveFarmIconType } from './icons';
+
+/**
+ * Kiểm tra và chuẩn hoá toạ độ (lat, lng) giữ nguyên 100% độ chính xác gốc:
+ * - lat nằm trong [-90, 90], lng trong [-180, 180].
+ * - Nếu lat nằm ngoài [-90, 90] nhưng nằm trong [-180, 180] và lng nằm trong [-90, 90]
+ *   (bị đảo thứ tự lat/lng), tự động hoán đổi lại và ghi cảnh báo ra console.warn.
+ */
+export function validateAndNormalizeLatLng(
+  rawLat: number,
+  rawLng: number,
+  pointLabel = ''
+): { lat: number; lng: number } | null {
+  if (
+    typeof rawLat !== 'number' ||
+    typeof rawLng !== 'number' ||
+    !Number.isFinite(rawLat) ||
+    !Number.isFinite(rawLng)
+  ) {
+    return null;
+  }
+
+  let lat = rawLat;
+  let lng = rawLng;
+
+  if (
+    (lat < -90 || lat > 90) &&
+    lat >= -180 &&
+    lat <= 180 &&
+    lng >= -90 &&
+    lng <= 90
+  ) {
+    console.warn(
+      `[Cảnh báo toạ độ] Điểm "${pointLabel}" có lat=${rawLat} nằm ngoài [-90,90], đã tự động hoán đổi lat/lng thành (${rawLng}, ${rawLat}).`
+    );
+    lat = rawLng;
+    lng = rawLat;
+  }
+
+  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+    return null;
+  }
+
+  return { lat, lng };
+}
 
 /**
  * Tạo ID ổn định từ tên và toạ độ trang trại để khi tự động đồng bộ từ Google My Maps
@@ -18,7 +63,7 @@ export function buildStableFarmId(
     .replace(/[^a-z0-9\u00C0-\u1EF9]+/gi, '-')
     .replace(/^-+|-+$/g, '')
     .slice(0, 32);
-  return `${prefix}-${slug || index}-${lat.toFixed(4)}-${lng.toFixed(4)}`;
+  return `${prefix}-${slug || index}-${lat.toFixed(5)}-${lng.toFixed(5)}`;
 }
 
 /**
@@ -109,18 +154,18 @@ export function parseKMLContent(
       return;
     }
 
-    const lng = parts[0];
-    const lat = parts[1];
-
-    if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
-      skippedCount++;
-      return;
-    }
-
     const nameEl = Array.from(pm.children).find(
       (el) => el.tagName.toLowerCase() === 'name'
     );
     const name = nameEl?.textContent?.trim() || `Trang trại #${index + 1}`;
+
+    // KML coordinates có thứ tự chuẩn: lng,lat[,alt]
+    const validated = validateAndNormalizeLatLng(parts[1], parts[0], name);
+    if (!validated) {
+      skippedCount++;
+      return;
+    }
+    const { lat, lng } = validated;
 
     let folderType = '';
     let parent = pm.parentElement;
@@ -195,7 +240,13 @@ export function parseKMLContent(
     }
     const cleanedDesc = cleanHtmlDescription(rawDesc);
 
-    const category = detectFarmCategory(rawType, name);
+    const category = resolveFarmIconType({
+      lat,
+      lng,
+      type: rawType,
+      name,
+      description: cleanedDesc,
+    });
     const statusText = `${cleanedDesc} ${JSON.stringify(extendedData)}`;
     const status = detectFarmStatus(statusText);
 
@@ -384,23 +435,19 @@ export function parseCSVContent(
     const row = rows[i];
     const latRaw = (row[latIdx] || '').replace(',', '.');
     const lngRaw = (row[lngIdx] || '').replace(',', '.');
-    const lat = parseFloat(latRaw);
-    const lng = parseFloat(lngRaw);
-
-    if (
-      Number.isNaN(lat) ||
-      Number.isNaN(lng) ||
-      lat < -90 ||
-      lat > 90 ||
-      lng < -180 ||
-      lng > 180
-    ) {
+    const name =
+      (nameIdx !== -1 ? row[nameIdx] : '') || `Trang trại CSV #${i}`;
+    const validated = validateAndNormalizeLatLng(
+      parseFloat(latRaw),
+      parseFloat(lngRaw),
+      name
+    );
+    if (!validated) {
       skippedCount++;
       continue;
     }
+    const { lat, lng } = validated;
 
-    const name =
-      (nameIdx !== -1 ? row[nameIdx] : '') || `Trang trại CSV #${i}`;
     const rawType = (typeIdx !== -1 ? row[typeIdx] : '') || 'Trang trại';
     const description =
       (descIdx !== -1 ? row[descIdx] : '') ||
@@ -425,7 +472,13 @@ export function parseCSVContent(
       }
     });
 
-    const category = detectFarmCategory(rawType, name);
+    const category = resolveFarmIconType({
+      lat,
+      lng,
+      type: rawType,
+      name,
+      description,
+    });
     const status = detectFarmStatus(
       `${description} ${JSON.stringify(extendedData)}`
     );
@@ -488,17 +541,26 @@ export function parseGeoJSONContent(
 
   if (Array.isArray(parsed)) {
     parsed.forEach((item, idx) => {
-      const lat = parseFloat(item.lat ?? item.latitude ?? item['vĩ độ']);
-      const lng = parseFloat(
+      const name = item.name || item.ten || `Trang trại #${idx + 1}`;
+      const rawLat = parseFloat(item.lat ?? item.latitude ?? item['vĩ độ']);
+      const rawLng = parseFloat(
         item.lng ?? item.lon ?? item.longitude ?? item['kinh độ']
       );
-      if (Number.isNaN(lat) || Number.isNaN(lng)) {
+      const validated = validateAndNormalizeLatLng(rawLat, rawLng, name);
+      if (!validated) {
         skippedCount++;
         return;
       }
-      const name = item.name || item.ten || `Trang trại #${idx + 1}`;
+      const { lat, lng } = validated;
+
       const rawType = item.type || item.loai || 'Trang trại';
-      const category = item.category || detectFarmCategory(rawType, name);
+      const category = resolveFarmIconType({
+        lat,
+        lng,
+        type: rawType,
+        name,
+        description: item.description || '',
+      });
       const status =
         item.status || detectFarmStatus(item.description || '');
 
@@ -541,21 +603,18 @@ export function parseGeoJSONContent(
         return;
       }
 
-      const [lng, lat] = feat.geometry.coordinates;
-      if (
-        typeof lat !== 'number' ||
-        typeof lng !== 'number' ||
-        Number.isNaN(lat) ||
-        Number.isNaN(lng)
-      ) {
-        skippedCount++;
-        return;
-      }
-
       const props = feat.properties || {};
       const name = String(
         props.name || props.Name || props.ten || `Trang trại #${idx + 1}`
       );
+      const [rawLng, rawLat] = feat.geometry.coordinates;
+      const validated = validateAndNormalizeLatLng(rawLat, rawLng, name);
+      if (!validated) {
+        skippedCount++;
+        return;
+      }
+      const { lat, lng } = validated;
+
       const rawType = String(
         props.type || props.Type || props.folder || props.layer || 'Trang trại'
       );
@@ -588,7 +647,13 @@ export function parseGeoJSONContent(
         }
       });
 
-      const category = detectFarmCategory(rawType, name);
+      const category = resolveFarmIconType({
+        lat,
+        lng,
+        type: rawType,
+        name,
+        description: cleanedDesc,
+      });
       const status = detectFarmStatus(
         `${cleanedDesc} ${JSON.stringify(extendedData)}`
       );

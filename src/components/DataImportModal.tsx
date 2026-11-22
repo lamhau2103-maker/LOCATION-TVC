@@ -213,18 +213,25 @@ export const DataImportModal: React.FC<DataImportModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0f2a24]/35 p-4 backdrop-blur-md">
+    <div
+      className="fixed inset-0 z-50 flex items-end justify-center bg-[#0f2a24]/35 p-0 backdrop-blur-md sm:items-center sm:p-4"
+      onClick={onClose}
+    >
       <motion.div
-        initial={{ opacity: 0, scale: 0.94, y: 12 }}
+        initial={{ opacity: 0, scale: 0.96, y: 20 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
-        exit={{ opacity: 0, scale: 0.94, y: 12 }}
+        exit={{ opacity: 0, scale: 0.96, y: 20 }}
         transition={{ type: 'spring', stiffness: 260, damping: 24 }}
-        className="relative max-h-[92vh] w-full max-w-xl overflow-y-auto rounded-[28px] border border-white/95 bg-white/90 p-6 text-[#0f2a24] shadow-[0_28px_70px_rgba(15,42,36,0.25)] backdrop-blur-2xl sm:p-7"
+        onClick={(e) => e.stopPropagation()}
+        className="relative max-h-[calc(100dvh-24px)] w-full max-w-xl overflow-y-auto rounded-t-[26px] border border-white/95 bg-white/94 p-5 text-[#0f2a24] shadow-[0_28px_70px_rgba(15,42,36,0.25)] backdrop-blur-2xl sm:rounded-[28px] sm:p-7"
+        style={{
+          paddingBottom: 'calc(var(--safe-bottom) + 20px)',
+        }}
       >
         {/* Header Modal */}
         <div className="mb-4 flex items-start justify-between gap-4">
           <div>
-            <h2 className="font-display text-lg font-extrabold tracking-tight text-[#0f2a24] sm:text-xl">
+            <h2 className="font-display text-base font-extrabold tracking-tight text-[#0f2a24] sm:text-xl">
               NẠP DỮ LIỆU GOOGLE MY MAPS (DỰ PHÒNG)
             </h2>
             <p className="mt-1 text-xs font-medium text-[#0f2a24]/75 sm:text-sm">
@@ -238,7 +245,7 @@ export const DataImportModal: React.FC<DataImportModalProps> = ({
           <button
             type="button"
             onClick={onClose}
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-emerald-950/10 bg-white text-[#0f2a24] transition-colors hover:border-[#d9261c] hover:bg-rose-50 hover:text-[#d9261c] cursor-pointer"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-emerald-950/10 bg-white text-[#0f2a24] transition-colors hover:border-[#d9261c] hover:bg-rose-50 hover:text-[#d9261c] cursor-pointer"
           >
             <X className="h-4 w-4" />
           </button>

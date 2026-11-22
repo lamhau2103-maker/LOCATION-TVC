@@ -1,5 +1,13 @@
 export type FarmCategory = 'chicken' | 'pig' | 'other';
 
+export type FarmSubType =
+  | 'chicken'
+  | 'pig'
+  | 'office'
+  | 'warehouse'
+  | 'wash'
+  | 'other';
+
 export type IconChoice = 'chicken' | 'pig' | 'auto';
 
 export type FarmIconOverrides = Record<string, 'chicken' | 'pig'>;
@@ -19,6 +27,10 @@ export interface Farm {
   type: string;
   /** Nhóm phân loại màu: chicken (cam #fb923c), pig (san hô #fb7185), other (xanh ngọc #14b8a6) */
   category: FarmCategory;
+  /** Nhóm biểu tượng chi tiết (chicken, pig, office, warehouse, wash, other) */
+  subType?: FarmSubType;
+  /** Có được nối đường vệt sáng từ Nhà máy Trung tâm hay không */
+  isConnectable?: boolean;
   /** Trạng thái vận hành: active (hoạt động), warning (cảnh báo), isolated (cách ly) */
   status: FarmStatus;
   lat: number;
@@ -28,7 +40,7 @@ export interface Farm {
   imageUrl?: string;
   /** Các thuộc tính mở rộng đọc từ <ExtendedData> của KML hoặc các cột phụ của CSV */
   extendedData?: Record<string, string | undefined>;
-  /** Khoá toạ độ ổn định "lat.toFixed(5),lng.toFixed(5)" */
+  /** Khoá toạ độ ổn định "lat.toFixed(5),lng.toFixed(5)" - CHỈ dùng để định danh, không dùng để vẽ */
   farmKey?: string;
   /** Lựa chọn icon thủ công của Quản trị viên (chicken | pig | auto) */
   manualIcon?: IconChoice;
@@ -54,4 +66,17 @@ export interface SyncState {
   lastSyncedTime: string | null;
   isOfflineFallback: boolean;
   statusText: string;
+}
+
+export interface PositionDiagnosticItem {
+  id: string;
+  name: string;
+  isHub?: boolean;
+  category: FarmCategory | 'hub';
+  rawLat: number;
+  rawLng: number;
+  renderedLat: number;
+  renderedLng: number;
+  deviationMeters: number;
+  isAccurate: boolean;
 }

@@ -26,15 +26,31 @@ import {
   SyncState,
   TimeOfDay,
 } from './types';
-import { getFarmKey, resolveFarmIconType } from './utils/icons';
-import { parseKMLContent } from './utils/parsers';
+import {
+  getFarmKey,
+  isConnectableFarm,
+  resolveFarmIconType,
+  resolveFarmSubType,
+} from './utils/icons';
+import {
+  parseKMLContent,
+  validateAndNormalizeLatLng,
+} from './utils/parsers';
 import { soundEngine } from './utils/sound';
 import { CursorSpotlight } from './components/CursorSpotlight';
 import { LoadingScreen } from './components/LoadingScreen';
 import { TopControlHUD } from './components/TopControlHUD';
-import { FarmDetailCard } from './components/FarmDetailCard';
+import {
+  FarmDetailCard,
+  HubDetailCard,
+  MobileSheetSnap,
+} from './components/FarmDetailCard';
 import { DataImportModal } from './components/DataImportModal';
-import { AdminLoginModal, BulkIconModal } from './components/AdminModals';
+import {
+  AdminLoginModal,
+  BulkIconModal,
+  PositionDiagnosticsModal,
+} from './components/AdminModals';
 import { MapScene, MapSceneHandle } from './components/MapScene';
 
 function detectLowEndDevice(): boolean {
@@ -401,20 +417,35 @@ export default function App() {
   const isAdmin = Boolean(adminPassword);
   const [isAdminLoginOpen, setIsAdminLoginOpen] = useState(false);
   const [isBulkIconModalOpen, setIsBulkIconModalOpen] = useState(false);
+  const [isPositionDiagOpen, setIsPositionDiagOpen] = useState(false);
 
-  // Áp dụng quy tắc 3 tầng xác định Icon (Server Override -> Từ khoá -> Mặc định nhà trại) cho toàn bộ trang trại
+  // Áp dụng quy tắc kiểm tra toạ độ chính xác 100% + phân loại Icon 3 tầng + kiểm tra isConnectableFarm
   const farms = useMemo<Farm[]>(() => {
-    return rawFarms.map((f) => {
-      const key = getFarmKey(f.lat, f.lng);
+    const result: Farm[] = [];
+    for (const f of rawFarms) {
+      const checked = validateAndNormalizeLatLng(f.lat, f.lng, f.name);
+      const exactLat = checked ? checked.lat : f.lat;
+      const exactLng = checked ? checked.lng : f.lng;
+      const key = getFarmKey(exactLat, exactLng);
       const manual = iconOverrides[key];
-      const resolvedCategory = resolveFarmIconType(f, iconOverrides);
-      return {
+      const baseFarm: Farm = {
         ...f,
+        lat: exactLat,
+        lng: exactLng,
         farmKey: key,
         manualIcon: manual || 'auto',
-        category: resolvedCategory,
       };
-    });
+      const resolvedCategory = resolveFarmIconType(baseFarm, iconOverrides);
+      const resolvedSubType = resolveFarmSubType(baseFarm, iconOverrides);
+      const connectable = isConnectableFarm(baseFarm, iconOverrides);
+      result.push({
+        ...baseFarm,
+        category: resolvedCategory,
+        subType: resolvedSubType,
+        isConnectable: connectable,
+      });
+    }
+    return result;
   }, [rawFarms, iconOverrides]);
 
   const [newlyAddedIds, setNewlyAddedIds] = useState<Set<string>>(new Set());
@@ -466,8 +497,13 @@ export default function App() {
     return APP_CONFIG.centralHub;
   });
 
-  // 7. Trạng thái tương tác bản đồ & bộ lọc
+  // 7. Trạng thái tương tác bản đồ, Nhà máy trung tâm (đường cung), đường cung đơn lẻ & bộ lọc
   const [selectedFarmId, setSelectedFarmId] = useState<string | null>(null);
+  const [isHubSelected, setIsHubSelected] = useState<boolean>(false);
+  const [singleArcFarmId, setSingleArcFarmId] = useState<string | null>(null);
+  const [mobileSheetSnap, setMobileSheetSnap] =
+    useState<MobileSheetSnap>('half');
+
   const selectedFarm = useMemo(
     () =>
       selectedFarmId
@@ -1132,14 +1168,51 @@ export default function App() {
     [farms, activeCategories]
   );
 
-  // Cách vào bản đồ (e): Bấm nút tròn nhỏ "Xem bản đồ chi tiết" ở góc dưới địa cầu
-  const handleEnterMapOverview = useCallback(() => {
+  // Bỏ chọn trang trại & nhà máy trung tâm (thu hồi đường cung về nhà máy và xoá hoàn toàn ArcLayer)
+  const handleClearSelection = useCallback(() => {
     setSelectedFarmId(null);
+    setIsHubSelected(false);
+    setSingleArcFarmId(null);
+    setIsTourRunning(false);
+    mapSceneRef.current?.clearCameraPadding();
+  }, []);
+
+  // Nhấn phím Esc để đóng card thông tin / bỏ chọn Nhà máy trung tâm và thu hồi đường kết nối
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (selectedFarmId || isHubSelected || singleArcFarmId) {
+          handleClearSelection();
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [handleClearSelection, isHubSelected, selectedFarmId, singleArcFarmId]);
+
+  // Bấm vào Icon Nhà máy Trung tâm Thái Việt -> bắn các đường cung từ Nhà máy tới các Trại gà & Trại heo kết nối được
+  const handleSelectHub = useCallback(() => {
+    setSelectedFarmId(null);
+    setSingleArcFarmId(null);
+    setIsTourRunning(false);
+    setIsHubSelected(true);
+    setMobileSheetSnap('half');
+    soundEngine.playPing(soundEnabled);
+    soundEngine.playWhoosh(soundEnabled, 1.5);
+    mapSceneRef.current?.flyToConnectedOverview();
+  }, [soundEnabled]);
+
+  // Cách vào bản đồ (e): Bấm nút tròn nhỏ "Xem bản đồ chi tiết" ở góc dưới địa cầu hoặc nút la bàn
+  const handleEnterMapOverview = useCallback(() => {
+    const isFromGlobe = stage === 'globe';
+    setSelectedFarmId(null);
+    setIsHubSelected(false);
+    setSingleArcFarmId(null);
     setIsTourRunning(false);
     setStage('map');
     soundEngine.playWhoosh(soundEnabled, 2.2);
-    mapSceneRef.current?.flyToOverview(5000, 65);
-  }, [soundEnabled]);
+    mapSceneRef.current?.flyToOverview(5000, isFromGlobe ? 65 : 60);
+  }, [soundEnabled, stage]);
 
   // Cách vào bản đồ (a): Bấm vào một điểm trang trại trên địa cầu (hoặc trên bản đồ) -> bay tới và mở card
   const handleSelectFarm = useCallback(
@@ -1147,7 +1220,10 @@ export default function App() {
       if (stage === 'globe') {
         setStage('map');
       }
+      setIsHubSelected(false);
+      setSingleArcFarmId((prev) => (prev === farm.id ? prev : null));
       setSelectedFarmId(farm.id);
+      setMobileSheetSnap('half');
       soundEngine.playPing(soundEnabled);
       soundEngine.playWhoosh(soundEnabled, 1.3);
       mapSceneRef.current?.flyToFarm(farm, 15.8);
@@ -1231,6 +1307,8 @@ export default function App() {
       if (stage === 'globe') {
         setStage('map');
       }
+      setIsHubSelected(false);
+      setSingleArcFarmId(null);
       setTourIndex(0);
       setIsTourRunning(true);
       showToast(
@@ -1264,7 +1342,7 @@ export default function App() {
 
     if (stage === 'map') {
       setTimeout(() => {
-        mapSceneRef.current?.flyToOverview(3200, 65);
+        mapSceneRef.current?.flyToOverview(3200, 60);
       }, 200);
     }
   };
@@ -1363,7 +1441,7 @@ export default function App() {
   };
 
   return (
-    <div className="relative h-screen w-screen overflow-hidden bg-[#e6f4f1] select-none">
+    <div className="relative h-[100dvh] w-screen overflow-hidden bg-[#e6f4f1] select-none">
       {/* Vầng sáng ấm nhẹ đi theo con trỏ chuột */}
       <CursorSpotlight disabled={liteMode} />
 
@@ -1378,7 +1456,12 @@ export default function App() {
         bouncingFarmId={bouncingFarmId}
         centralHub={centralHub}
         selectedFarm={selectedFarm}
+        isHubSelected={isHubSelected}
+        singleArcFarmId={singleArcFarmId}
+        mobileSheetSnap={mobileSheetSnap}
         onSelectFarm={handleSelectFarm}
+        onSelectHub={handleSelectHub}
+        onClearSelection={handleClearSelection}
         onEnterMapOverview={handleEnterMapOverview}
         activeCategories={activeCategories}
         searchQuery={searchQuery}
@@ -1387,9 +1470,18 @@ export default function App() {
         mapStyleMode={mapStyleMode}
         timeOfDay={timeOfDay}
         liteMode={liteMode}
+        onSatelliteFallbackToStreet={() => {
+          setMapStyleMode((prev) => {
+            if (prev === 'street') return prev;
+            showToast(
+              'Ảnh vệ tinh khu vực này chưa đầy đủ, đã chuyển sang bản đồ đường phố'
+            );
+            return 'street';
+          });
+        }}
       />
 
-      {/* GIAI ĐOẠN 1: Màn hình Loading ngắn (< 2s) với Logo lớn Thái Việt Corporation */}
+      {/* GIAI ĐOẠN 1: Màn hình Loading ngắn (< 2s) */}
       <AnimatePresence>
         {stage === 'loading' && (
           <LoadingScreen
@@ -1400,7 +1492,7 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      {/* Bảng thống kê & Thanh điều khiển góc trên (Hiển thị ngay khi mở Địa cầu xoay và trên Bản đồ) */}
+      {/* Bảng thống kê & Thanh điều khiển (Đáp ứng mọi thiết bị) */}
       <AnimatePresence>
         {stage !== 'loading' && (
           <TopControlHUD
@@ -1437,45 +1529,63 @@ export default function App() {
             onResetDefault={handleResetDefault}
             onFlyOverview={handleEnterMapOverview}
             onBackToGlobe={() => {
-              setSelectedFarmId(null);
-              setIsTourRunning(false);
+              handleClearSelection();
               setStage('globe');
               soundEngine.playWhoosh(soundEnabled, 2.0);
               mapSceneRef.current?.flyToGlobe();
             }}
-            onFlyToHub={() => {
-              setSelectedFarmId(null);
-              setIsTourRunning(false);
-              setStage('map');
-              soundEngine.playWhoosh(soundEnabled, 1.5);
-              mapSceneRef.current?.flyToHub();
-            }}
+            onFlyToHub={handleSelectHub}
             isAdmin={isAdmin}
             isServerIconConnected={isServerIconConnected}
             onOpenAdminLogin={() => setIsAdminLoginOpen(true)}
             onLogoutAdmin={handleLogoutAdmin}
             onOpenBulkIconModal={() => setIsBulkIconModalOpen(true)}
+            onOpenPositionDiagnostics={() => setIsPositionDiagOpen(true)}
+            hasActiveCard={Boolean(selectedFarm || isHubSelected)}
           />
         )}
       </AnimatePresence>
 
-      {/* Card thông tin 3D Kính Trắng Mờ (hoặc Bottom-Sheet trên điện thoại) */}
+      {/* Card thông tin Trang trại (Kính trắng mờ / Bottom-Sheet 3 nấc trên điện thoại) */}
       <AnimatePresence>
-        {stage === 'map' && selectedFarm && (
+        {stage !== 'loading' && selectedFarm && (
           <FarmDetailCard
             farm={selectedFarm}
             centralHub={centralHub}
             biosecurityRadius={biosecurityRadius}
             logoUrl={logoUrl}
-            onClose={() => {
-              setSelectedFarmId(null);
-              setIsTourRunning(false);
-            }}
+            onClose={handleClearSelection}
             onPrevFarm={filteredFarms.length > 1 ? handlePrevFarm : undefined}
             onNextFarm={filteredFarms.length > 1 ? handleNextFarm : undefined}
             liteMode={liteMode}
             isAdmin={isAdmin}
             onSelectFarmIcon={handleSelectFarmIcon}
+            isSingleArcActive={singleArcFarmId === selectedFarm.id}
+            onToggleSingleArc={() => {
+              setSingleArcFarmId((prev) =>
+                prev === selectedFarm.id ? null : selectedFarm.id
+              );
+              soundEngine.playPing(soundEnabled);
+            }}
+            mobileSheetSnap={mobileSheetSnap}
+            onChangeMobileSheetSnap={setMobileSheetSnap}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Card thông tin Nhà máy Trung tâm Thái Việt (Khi bấm vào icon Nhà máy Trung tâm) */}
+      <AnimatePresence>
+        {stage !== 'loading' && isHubSelected && !selectedFarm && (
+          <HubDetailCard
+            centralHub={centralHub}
+            farms={farms}
+            activeCategories={activeCategories}
+            logoUrl={logoUrl}
+            onClose={handleClearSelection}
+            onSelectFarm={handleSelectFarm}
+            liteMode={liteMode}
+            mobileSheetSnap={mobileSheetSnap}
+            onChangeMobileSheetSnap={setMobileSheetSnap}
           />
         )}
       </AnimatePresence>
@@ -1514,6 +1624,23 @@ export default function App() {
         onBulkSelectFarmsIcon={handleBulkSelectFarmsIcon}
       />
 
+      {/* Hộp thoại Kiểm tra vị trí toạ độ 3D cho Quản trị viên */}
+      <PositionDiagnosticsModal
+        isOpen={isPositionDiagOpen}
+        onClose={() => setIsPositionDiagOpen(false)}
+        getDiagnostics={() =>
+          mapSceneRef.current?.getPositionDiagnostics() || []
+        }
+        onFlyToPoint={(_lat, _lng, id) => {
+          if (id === 'central-hub') {
+            handleSelectHub();
+          } else {
+            const found = farms.find((f) => f.id === id);
+            if (found) handleSelectFarm(found);
+          }
+        }}
+      />
+
       {/* Thông báo Toast sáng tươi mới ở góc dưới màn hình */}
       <AnimatePresence>
         {toastMessage && (
@@ -1522,21 +1649,20 @@ export default function App() {
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 20, scale: 0.95 }}
             transition={{ type: 'spring', stiffness: 280, damping: 24 }}
-            className="glass-panel pointer-events-none fixed bottom-16 left-1/2 z-50 flex -translate-x-1/2 items-center gap-2.5 rounded-full px-5 py-2.5 text-xs font-bold text-[#0f2a24] sm:text-sm"
+            className="glass-panel pointer-events-none fixed bottom-20 left-1/2 z-50 flex -translate-x-1/2 items-center gap-2.5 rounded-full px-5 py-2.5 text-xs font-bold text-[#0f2a24] sm:bottom-16 sm:text-sm"
           >
-            <CheckCircle2 className="h-4 w-4 text-[#2b8fd0] shrink-0" />
+            <CheckCircle2 className="h-4 w-4 shrink-0 text-[#2b8fd0]" />
             <span>{toastMessage}</span>
           </motion.div>
         )}
       </AnimatePresence>
 
       {/* Gợi ý thao tác nhanh ở góc phải dưới khi đang ở Bản đồ */}
-      {stage === 'map' && !selectedFarm && (
-        <div className="glass-panel pointer-events-none fixed right-4 bottom-3 z-20 hidden items-center gap-2 rounded-full px-3.5 py-1.5 text-[11px] font-semibold text-[#0f2a24]/80 sm:flex">
+      {stage === 'map' && !selectedFarm && !isHubSelected && (
+        <div className="glass-panel pointer-events-none fixed right-4 bottom-3 z-20 hidden items-center gap-2 rounded-full px-3.5 py-1.5 text-[11px] font-semibold text-[#0f2a24]/80 lg:flex">
           <Sparkles className="h-3.5 w-3.5 text-[#2b8fd0]" />
           <span>
-            Bấm vào Ghim hoặc Chuồng 3D để xem chi tiết · Giữ chuột phải để xoay
-            địa hình 3D
+            Bấm vào Nhà máy Trung tâm để hiện đường kết nối · Bấm Ghim trang trại để xem chi tiết
           </span>
         </div>
       )}

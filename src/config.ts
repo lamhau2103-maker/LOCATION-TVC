@@ -153,6 +153,35 @@ export const APP_CONFIG = {
   iconOverridesStorageKey: 'thaiviet_corp_icon_overrides_v1',
   adminSessionStorageKey: 'thaiviet_corp_admin_session_v1',
   userPrefsStorageKey: 'thaiviet_corp_user_prefs_v1',
+
+  // Danh sách từ khoá LOẠI TRỪ (không nối đường từ Nhà máy Trung tâm & không tự động gán icon Gà/Heo)
+  arcExcludeKeywords: [
+    'kho',
+    'van phong',
+    'vp ',
+    'office',
+    'rua xe',
+    'diem rua',
+    'tram rua',
+    'sat khuan',
+    'sat trung',
+    'nha may',
+    'factory',
+    'warehouse',
+    'bao ve',
+    'cong ty',
+  ],
+
+  // Danh sách từ khoá CHO PHÉP kết nối đường cung từ Nhà máy Trung tâm (chỉ nối tới Trại gà và Trại heo)
+  arcIncludeKeywords: [
+    'trai ga',
+    'trai heo',
+    'trang trai ga',
+    'trang trai heo',
+    'chicken farm',
+    'pig farm',
+    'poultry',
+  ],
 };
 
 /**
@@ -226,6 +255,9 @@ export function detectFarmStatus(rawText = ''): FarmStatus {
   }
   return 'active';
 }
+
+export const ARC_EXCLUDE_KEYWORDS: string[] = APP_CONFIG.arcExcludeKeywords;
+export const ARC_INCLUDE_KEYWORDS: string[] = APP_CONFIG.arcIncludeKeywords;
 
 export function getCategoryConfig(category: FarmCategory) {
   return APP_CONFIG.colors.categories[category] || APP_CONFIG.colors.categories.other;

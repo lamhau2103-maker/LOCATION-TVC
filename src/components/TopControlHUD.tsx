@@ -2,8 +2,11 @@ import React, { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion, PanInfo } from 'framer-motion';
 import {
   AlertTriangle,
+  ChevronDown,
+  ChevronUp,
   Clock,
   Compass,
+  Crosshair,
   Database,
   Feather,
   Globe2,
@@ -84,14 +87,20 @@ interface TopControlHUDProps {
   onOpenAdminLogin: () => void;
   onLogoutAdmin: () => void;
   onOpenBulkIconModal: () => void;
+  onOpenPositionDiagnostics: () => void;
+  hasActiveCard?: boolean;
 }
 
 /**
- * BẢNG THỐNG KÊ & ĐIỀU KHIỂN GỌN GÀNG GÓC TRÊN
- * - Hàng 1: Trái = Bảng Logo + Thống kê (giữ nguyên); Phải = 3 nút ("TOUR TỰ ĐỘNG", nút tròn La bàn, nút tròn ⚙ "Tùy chỉnh" + huy hiệu nhỏ "QUẢN TRỊ" nếu đang ở chế độ quản trị).
- * - Hàng 2: Ô tìm kiếm + Chip lọc (Trại gà / Trại heo / Khác) gọn gàng trên 1 hàng, cuộn ngang mượt trên điện thoại.
- * - Panel "Tùy chỉnh" thả xuống dưới nút ⚙ (hoặc bottom-sheet vuốt xuống trên điện thoại) gom 5 nhóm:
- *   1. Dữ liệu | 2. Bản đồ | 3. Thời gian | 4. Hiệu năng & âm thanh | 5. Quản trị
+ * BẢNG THỐNG KÊ & ĐIỀU KHIỂN ĐÁP ỨNG MỌI THIẾT BỊ (LAPTOP, IPAD, ĐIỆN THOẠI DỌC & NGANG)
+ * - Laptop & iPad (>= 640px):
+ *   + Hàng 1: Trái = Bảng Logo + Thống kê; Phải = 3 nút ("TOUR TỰ ĐỘNG", nút tròn La bàn, nút tròn ⚙ "Tùy chỉnh" + huy hiệu "QUẢN TRỊ").
+ *   + Hàng 2: Ô tìm kiếm + Chip lọc (Trại gà / Trại heo / Khác).
+ * - Điện thoại dọc (< 640px):
+ *   + Thanh trên gọn: Logo + tên ngắn + chip thống kê thu gọn (bấm vào để mở rộng/thu gọn) + nút La bàn & nút ⚙ Tùy chỉnh (44x44px).
+ *   + Thanh dưới (bottom dock): Chip lọc cuộn ngang nằm ngay trên dock + nút kính lúp tìm kiếm (bấm bung rộng) + nút "TOUR TỰ ĐỘNG".
+ * - Điện thoại ngang (chiều cao < 500px):
+ *   + Thu gọn thanh trên thành 1 dòng mỏng, các nút chỉ hiện icon 44x44px để không tràn chiều dọc.
  */
 export const TopControlHUD: React.FC<TopControlHUDProps> = ({
   stage,
@@ -133,10 +142,32 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
   onOpenAdminLogin,
   onLogoutAdmin,
   onOpenBulkIconModal,
+  onOpenPositionDiagnostics,
+  hasActiveCard = false,
 }) => {
   const [logoError, setLogoError] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isMobileStatsExpanded, setIsMobileStatsExpanded] = useState(false);
+  const [isMobileSearchExpanded, setIsMobileSearchExpanded] = useState(false);
+  const [isLandscapeShort, setIsLandscapeShort] = useState(false);
+
   const settingsWrapperRef = useRef<HTMLDivElement | null>(null);
+  const mobileSearchInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    const checkViewport = () => {
+      setIsLandscapeShort(
+        window.innerHeight < 500 && window.innerWidth > window.innerHeight
+      );
+    };
+    checkViewport();
+    window.addEventListener('resize', checkViewport);
+    window.addEventListener('orientationchange', checkViewport);
+    return () => {
+      window.removeEventListener('resize', checkViewport);
+      window.removeEventListener('orientationchange', checkViewport);
+    };
+  }, []);
 
   const chickenCount = farms.filter((f) => f.category === 'chicken').length;
   const pigCount = farms.filter((f) => f.category === 'pig').length;
@@ -148,11 +179,9 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
     0
   );
 
-  // Chấm trạng thái nhỏ trên nút ⚙: xanh lá khi đồng bộ bình thường, vàng khi lỗi đồng bộ hoặc đang dùng dữ liệu lưu cũ
   const isSyncNormal =
     Boolean(syncState.lastSyncedTime) && !syncState.isOfflineFallback;
 
-  // Đóng panel Tùy chỉnh khi nhấn phím Esc hoặc bấm ra ngoài
   useEffect(() => {
     if (!isSettingsOpen) return;
 
@@ -163,7 +192,7 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
     };
 
     const handlePointerDown = (e: MouseEvent) => {
-      if (window.innerWidth < 640) return; // Mobile dùng backdrop riêng
+      if (window.innerWidth < 640) return;
       if (
         settingsWrapperRef.current &&
         !settingsWrapperRef.current.contains(e.target as Node)
@@ -184,6 +213,7 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
     if (e.key === 'Enter') {
       e.preventDefault();
       onSearchSubmit();
+      setIsMobileSearchExpanded(false);
     }
   };
 
@@ -269,7 +299,10 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
                   : 'bg-[#f59e0b] shadow-[0_0_6px_#f59e0b]'
               }`}
             />
-            <span className="max-w-[180px] truncate" title={syncState.statusText}>
+            <span
+              className="max-w-[180px] truncate"
+              title={syncState.statusText}
+            >
               {syncState.statusText}
             </span>
           </div>
@@ -280,7 +313,7 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
             type="button"
             onClick={onSyncNow}
             disabled={syncState.isSyncing}
-            className="flex items-center justify-center gap-1.5 rounded-xl bg-[#2b8fd0] px-3 py-2 text-xs font-extrabold text-white shadow-xs transition-colors hover:bg-[#1e74ad] disabled:opacity-60 cursor-pointer"
+            className="flex min-h-[42px] items-center justify-center gap-1.5 rounded-xl bg-[#2b8fd0] px-3 py-2 text-xs font-extrabold text-white shadow-xs transition-colors hover:bg-[#1e74ad] disabled:opacity-60 cursor-pointer"
           >
             <RefreshCw
               className={`h-3.5 w-3.5 ${
@@ -296,7 +329,7 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
               setIsSettingsOpen(false);
               onOpenImport();
             }}
-            className="flex items-center justify-center gap-1.5 rounded-xl border border-emerald-950/12 bg-white/90 px-3 py-2 text-xs font-bold text-[#0f2a24] transition-colors hover:border-[#2b8fd0] hover:text-[#2b8fd0] cursor-pointer"
+            className="flex min-h-[42px] items-center justify-center gap-1.5 rounded-xl border border-emerald-950/12 bg-white/90 px-3 py-2 text-xs font-bold text-[#0f2a24] transition-colors hover:border-[#2b8fd0] hover:text-[#2b8fd0] cursor-pointer"
           >
             <Upload className="h-3.5 w-3.5 text-[#2b8fd0]" />
             <span>Nạp dữ liệu</span>
@@ -310,7 +343,7 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
               onResetDefault();
               setIsSettingsOpen(false);
             }}
-            className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-rose-200 bg-rose-50/75 px-3 py-1.5 text-[11px] font-bold text-[#d9261c] transition-colors hover:bg-rose-100 cursor-pointer"
+            className="flex min-h-[38px] w-full items-center justify-center gap-1.5 rounded-xl border border-rose-200 bg-rose-50/75 px-3 py-1.5 text-[11px] font-bold text-[#d9261c] transition-colors hover:bg-rose-100 cursor-pointer"
           >
             <Trash2 className="h-3.5 w-3.5" />
             <span>Khôi phục dữ liệu mặc định</span>
@@ -334,7 +367,7 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
                 setIsSettingsOpen(false);
                 onBackToGlobe();
               }}
-              className="inline-flex items-center gap-1 rounded-full bg-[#2b8fd0]/10 px-2.5 py-0.5 text-[11px] font-extrabold text-[#2b8fd0] hover:bg-[#2b8fd0]/20 cursor-pointer"
+              className="inline-flex items-center gap-1 rounded-full bg-[#2b8fd0]/10 px-2.5 py-1 text-[11px] font-extrabold text-[#2b8fd0] hover:bg-[#2b8fd0]/20 cursor-pointer"
             >
               <Globe2 className="h-3 w-3" />
               <span>Về địa cầu 3D</span>
@@ -349,7 +382,7 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
             onClick={() => {
               if (mapStyleMode !== 'satellite') onToggleMapStyle();
             }}
-            className={`flex items-center justify-center gap-1.5 rounded-lg py-1.5 text-xs font-extrabold transition-all cursor-pointer ${
+            className={`flex min-h-[38px] items-center justify-center gap-1.5 rounded-lg py-1.5 text-xs font-extrabold transition-all cursor-pointer ${
               mapStyleMode === 'satellite'
                 ? 'bg-white text-[#2b8fd0] shadow-xs'
                 : 'text-[#0f2a24]/70 hover:text-[#0f2a24]'
@@ -364,7 +397,7 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
             onClick={() => {
               if (mapStyleMode !== 'street') onToggleMapStyle();
             }}
-            className={`flex items-center justify-center gap-1.5 rounded-lg py-1.5 text-xs font-extrabold transition-all cursor-pointer ${
+            className={`flex min-h-[38px] items-center justify-center gap-1.5 rounded-lg py-1.5 text-xs font-extrabold transition-all cursor-pointer ${
               mapStyleMode === 'street'
                 ? 'bg-white text-[#10b981] shadow-xs'
                 : 'text-[#0f2a24]/70 hover:text-[#0f2a24]'
@@ -407,7 +440,6 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
           <span>3. Thời gian</span>
         </div>
 
-        {/* Segmented 5 mục: Bình minh / Ban ngày / Hoàng hôn / Đêm / Tự động */}
         <div className="grid grid-cols-5 gap-1 rounded-xl border border-emerald-950/10 bg-emerald-950/[0.04] p-1">
           {timeOptions.map((opt) => {
             const active = timeOfDay === opt.key && !isAutoTime;
@@ -416,14 +448,14 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
                 key={opt.key}
                 type="button"
                 onClick={() => onSelectTimeOfDay(opt.key)}
-                className={`flex flex-col items-center justify-center gap-1 rounded-lg px-1 py-1.5 text-[10px] font-bold transition-all cursor-pointer ${
+                className={`flex min-h-[42px] flex-col items-center justify-center gap-1 rounded-lg px-1 py-1.5 text-[10px] font-bold transition-all cursor-pointer ${
                   active
                     ? 'bg-[#2b8fd0] text-white shadow-xs'
                     : 'text-[#0f2a24]/75 hover:bg-white/60 hover:text-[#0f2a24]'
                 }`}
               >
                 {opt.icon}
-                <span className="truncate max-w-full">{opt.shortLabel}</span>
+                <span className="max-w-full truncate">{opt.shortLabel}</span>
               </button>
             );
           })}
@@ -431,14 +463,14 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
           <button
             type="button"
             onClick={onToggleAutoTime}
-            className={`flex flex-col items-center justify-center gap-1 rounded-lg px-1 py-1.5 text-[10px] font-bold transition-all cursor-pointer ${
+            className={`flex min-h-[42px] flex-col items-center justify-center gap-1 rounded-lg px-1 py-1.5 text-[10px] font-bold transition-all cursor-pointer ${
               isAutoTime
                 ? 'bg-[#10b981] text-white shadow-xs'
                 : 'text-[#0f2a24]/75 hover:bg-white/60 hover:text-[#0f2a24]'
             }`}
           >
             <Clock className="h-3.5 w-3.5" />
-            <span className="truncate max-w-full">Tự động</span>
+            <span className="max-w-full truncate">Tự động</span>
           </button>
         </div>
       </div>
@@ -453,7 +485,6 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
         </div>
 
         <div className="space-y-1.5 rounded-xl border border-emerald-950/10 bg-white/75 p-2.5">
-          {/* Toggle Chế độ nhẹ */}
           <div className="flex items-center justify-between py-1">
             <div className="flex items-center gap-2">
               <Feather className="h-3.5 w-3.5 text-[#f59e0b]" />
@@ -464,13 +495,13 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
               role="switch"
               aria-checked={liteMode}
               onClick={onToggleLiteMode}
-              className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors cursor-pointer ${
+              className={`relative inline-flex h-6 w-10 shrink-0 items-center rounded-full transition-colors cursor-pointer ${
                 liteMode ? 'bg-[#10b981]' : 'bg-emerald-950/20'
               }`}
             >
               <span
-                className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow-xs transition-transform ${
-                  liteMode ? 'translate-x-4.5' : 'translate-x-1'
+                className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-xs transition-transform ${
+                  liteMode ? 'translate-x-5' : 'translate-x-1'
                 }`}
               />
             </button>
@@ -478,7 +509,6 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
 
           <div className="h-px bg-emerald-950/10" />
 
-          {/* Toggle Âm thanh */}
           <div className="flex items-center justify-between py-1">
             <div className="flex items-center gap-2">
               {soundEnabled ? (
@@ -493,13 +523,13 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
               role="switch"
               aria-checked={soundEnabled}
               onClick={onToggleSound}
-              className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors cursor-pointer ${
+              className={`relative inline-flex h-6 w-10 shrink-0 items-center rounded-full transition-colors cursor-pointer ${
                 soundEnabled ? 'bg-[#10b981]' : 'bg-emerald-950/20'
               }`}
             >
               <span
-                className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow-xs transition-transform ${
-                  soundEnabled ? 'translate-x-4.5' : 'translate-x-1'
+                className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-xs transition-transform ${
+                  soundEnabled ? 'translate-x-5' : 'translate-x-1'
                 }`}
               />
             </button>
@@ -531,7 +561,7 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
               setIsSettingsOpen(false);
               onOpenAdminLogin();
             }}
-            className="flex w-full items-center justify-center gap-2 rounded-xl border border-[#2b8fd0]/30 bg-white/90 px-3.5 py-2 text-xs font-extrabold text-[#2b8fd0] transition-colors hover:bg-[#2b8fd0] hover:text-white cursor-pointer"
+            className="flex min-h-[42px] w-full items-center justify-center gap-2 rounded-xl border border-[#2b8fd0]/30 bg-white/90 px-3.5 py-2 text-xs font-extrabold text-[#2b8fd0] transition-colors hover:bg-[#2b8fd0] hover:text-white cursor-pointer"
           >
             <Lock className="h-3.5 w-3.5" />
             <span>Đăng nhập quản trị</span>
@@ -545,28 +575,40 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
                   setIsSettingsOpen(false);
                   onOpenBulkIconModal();
                 }}
-                className="flex items-center justify-center gap-1.5 rounded-xl bg-[#2b8fd0] px-3 py-2 text-xs font-extrabold text-white shadow-xs transition-colors hover:bg-[#1e74ad] cursor-pointer"
+                className="flex min-h-[42px] items-center justify-center gap-1.5 rounded-xl bg-[#2b8fd0] px-2.5 py-2 text-xs font-extrabold text-white shadow-xs transition-colors hover:bg-[#1e74ad] cursor-pointer"
               >
-                <Layers className="h-3.5 w-3.5" />
+                <Layers className="h-3.5 w-3.5 shrink-0" />
                 <span>Chọn icon hàng loạt</span>
               </button>
 
               <button
                 type="button"
                 onClick={() => {
-                  onLogoutAdmin();
                   setIsSettingsOpen(false);
+                  onOpenPositionDiagnostics();
                 }}
-                className="flex items-center justify-center gap-1.5 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-extrabold text-[#d9261c] transition-colors hover:bg-rose-100 cursor-pointer"
+                className="flex min-h-[42px] items-center justify-center gap-1.5 rounded-xl border border-[#2b8fd0]/30 bg-white px-2.5 py-2 text-xs font-extrabold text-[#2b8fd0] shadow-xs transition-colors hover:bg-sky-50 cursor-pointer"
               >
-                <LogOut className="h-3.5 w-3.5" />
-                <span>Thoát quản trị</span>
+                <Crosshair className="h-3.5 w-3.5 shrink-0" />
+                <span>Kiểm tra vị trí</span>
               </button>
             </div>
 
+            <button
+              type="button"
+              onClick={() => {
+                onLogoutAdmin();
+                setIsSettingsOpen(false);
+              }}
+              className="flex min-h-[38px] w-full items-center justify-center gap-1.5 rounded-xl border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-extrabold text-[#d9261c] transition-colors hover:bg-rose-100 cursor-pointer"
+            >
+              <LogOut className="h-3.5 w-3.5" />
+              <span>Thoát quản trị</span>
+            </button>
+
             {!isServerIconConnected && (
               <div className="flex items-center gap-1.5 rounded-xl border border-amber-300 bg-amber-50/90 px-2.5 py-1.5 text-[11px] font-bold text-amber-800">
-                <AlertTriangle className="h-3.5 w-3.5 text-amber-600 shrink-0" />
+                <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-600" />
                 <span>Chưa kết nối máy chủ: lựa chọn chỉ lưu trên máy này</span>
               </div>
             )}
@@ -576,33 +618,200 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
     </div>
   );
 
-  return (
-    <div className="pointer-events-none fixed inset-x-0 top-0 z-20 flex flex-col gap-2.5 p-3 sm:p-4">
-      {/* HÀNG 1: Bảng Logo + Thống kê bên trái | 3 Nút gọn gàng bên phải */}
-      <div className="flex flex-wrap items-start justify-between gap-2.5">
-        {/* Khối Trái: Logo Hoa Sen Thái Việt + Tên công ty + Bảng thống kê (Giữ nguyên) */}
-        <motion.div
-          initial={{ opacity: 0, y: -16 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ type: 'spring', stiffness: 240, damping: 24 }}
-          className="glass-panel pointer-events-auto relative overflow-hidden rounded-[22px] px-3.5 py-2.5 sm:px-4"
+  // TRƯỜNG HỢP 1: ĐIỆN THOẠI XOAY NGANG (height < 500px) -> Thanh trên 1 dòng siêu gọn
+  if (isLandscapeShort) {
+    return (
+      <>
+        <div
+          className="pointer-events-none fixed inset-x-0 top-0 z-20 flex items-center justify-between gap-2 px-3 py-1.5"
+          style={{
+            paddingTop: 'max(6px, var(--safe-top))',
+            paddingLeft: 'max(12px, var(--safe-left))',
+            paddingRight: 'max(12px, var(--safe-right))',
+          }}
         >
-          <PanelParticles count={6} color="#facc15" disabled={liteMode} />
+          {/* Cụm Trái: Logo + Chip thống kê 1 dòng + Chip lọc */}
+          <div className="glass-panel pointer-events-auto flex items-center gap-2 rounded-full px-2.5 py-1">
+            <button
+              type="button"
+              onClick={stage === 'map' ? onBackToGlobe : onFlyOverview}
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-white bg-white p-1 shadow-xs cursor-pointer"
+            >
+              {!logoError ? (
+                <img
+                  src={logoUrl}
+                  alt={companyName}
+                  onError={() => setLogoError(true)}
+                  className="h-full w-full object-contain"
+                />
+              ) : (
+                <Globe2 className="h-4 w-4 text-[#2b8fd0]" />
+              )}
+            </button>
 
-          <div className="relative z-10 flex flex-wrap items-center gap-3.5 sm:gap-5">
-            {/* Thương hiệu: Khung kính trắng chứa phần Hoa sen + Tên công ty */}
-            <div className="flex items-center gap-3 border-r border-emerald-950/10 pr-3.5">
-              <motion.button
+            <button
+              type="button"
+              onClick={onFlyToHub}
+              className="hidden items-center gap-1 text-[11px] font-extrabold text-[#2b8fd0] hover:underline md:inline-flex cursor-pointer"
+            >
+              <CuteCategoryIcon category="hub" className="h-3.5 w-3.5" />
+              <span>Nhà máy TT</span>
+            </button>
+
+            <div className="h-4 w-px bg-emerald-950/15" />
+
+            <span className="text-[11px] font-extrabold text-[#0f2a24]">
+              {farms.length} trại
+            </span>
+
+            {categoryButtons.map((btn) => {
+              const isActive = activeCategories[btn.key];
+              return (
+                <button
+                  key={btn.key}
+                  type="button"
+                  onClick={() => onToggleCategory(btn.key)}
+                  className={`flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-extrabold transition-all cursor-pointer ${
+                    isActive
+                      ? 'bg-white text-[#0f2a24] shadow-2xs ring-1 ring-[#2b8fd0]/20'
+                      : 'opacity-45'
+                  }`}
+                >
+                  <CuteCategoryIcon category={btn.key} className="h-3.5 w-3.5" />
+                  <span>{btn.count}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Cụm Phải: Tìm kiếm nhỏ + Nút icon Tour + La bàn + Tùy chỉnh */}
+          <div className="pointer-events-auto flex items-center gap-1.5">
+            <div className="relative flex items-center">
+              <Search className="pointer-events-none absolute left-2.5 h-3.5 w-3.5 text-[#2b8fd0]" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => onSearchChange(e.target.value)}
+                onKeyDown={handleSearchKeyDown}
+                placeholder="Tìm trại..."
+                className="glass-panel h-9 w-28 rounded-full pr-6 pl-7 text-xs font-medium text-[#0f2a24] focus:w-40 focus:outline-none"
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => onSearchChange('')}
+                  className="absolute right-2 text-emerald-950/50"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              )}
+            </div>
+
+            <button
+              type="button"
+              onClick={onToggleTour}
+              title={isTourRunning ? 'Dừng Tour' : 'Tour tự động'}
+              className={`flex h-9 w-9 items-center justify-center rounded-full text-white shadow-sm cursor-pointer ${
+                isTourRunning
+                  ? 'bg-[#d9261c]'
+                  : 'bg-gradient-to-r from-[#2b8fd0] to-[#10b981]'
+              }`}
+            >
+              {isTourRunning ? (
+                <Square className="h-3.5 w-3.5 fill-current" />
+              ) : (
+                <Play className="h-3.5 w-3.5 fill-current" />
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={onFlyOverview}
+              title="Xem toàn cảnh bản đồ"
+              className="glass-panel flex h-9 w-9 items-center justify-center rounded-full text-[#2b8fd0] cursor-pointer"
+            >
+              <Compass className="h-4 w-4" />
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setIsSettingsOpen((p) => !p)}
+              title="Tùy chỉnh"
+              className={`relative flex h-9 w-9 items-center justify-center rounded-full cursor-pointer ${
+                isSettingsOpen
+                  ? 'bg-[#2b8fd0] text-white'
+                  : 'glass-panel text-[#2b8fd0]'
+              }`}
+            >
+              <Settings className="h-4 w-4" />
+              <span
+                className={`absolute top-0.5 right-0.5 h-2 w-2 rounded-full ring-1 ring-white ${
+                  isSyncNormal ? 'bg-[#10b981]' : 'bg-[#f59e0b]'
+                }`}
+              />
+            </button>
+          </div>
+        </div>
+
+        {/* Modal Tùy chỉnh cho màn hình ngang thấp */}
+        <AnimatePresence>
+          {isSettingsOpen && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsSettingsOpen(false)}
+              className="pointer-events-auto fixed inset-0 z-50 flex items-center justify-end bg-[#0f2a24]/35 p-2 backdrop-blur-xs"
+            >
+              <motion.div
+                initial={{ x: 40, opacity: 0 }}
+                animate={{ x: 0, opacity: 1 }}
+                exit={{ x: 40, opacity: 0 }}
+                onClick={(e) => e.stopPropagation()}
+                className="glass-panel max-h-[calc(100dvh-16px)] w-[340px] overflow-y-auto rounded-[20px] border border-white/95 bg-white/95 p-4 shadow-2xl"
+              >
+                <div className="mb-2.5 flex items-center justify-between border-b border-emerald-950/10 pb-2">
+                  <span className="text-xs font-extrabold text-[#0f2a24]">
+                    TÙY CHỈNH HỆ THỐNG
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setIsSettingsOpen(false)}
+                    className="flex h-7 w-7 items-center justify-center rounded-full bg-emerald-950/5"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+                {renderSettingsSections()}
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </>
+    );
+  }
+
+  return (
+    <>
+      {/* =====================================================================
+          GIAO DIỆN ĐIỆN THOẠI DỌC (< 640px):
+          - Thanh trên gọn (Logo + Tên ngắn + Chip thống kê bấm để mở rộng + Nút La bàn & ⚙ Tùy chỉnh)
+          - Thanh dưới (Bottom Dock): Chip lọc cuộn ngang + Nút Tìm kiếm bung rộng + Nút TOUR TỰ ĐỘNG
+         ===================================================================== */}
+      <div
+        className="pointer-events-none fixed inset-x-0 top-0 z-20 flex flex-col gap-2 px-2.5 pt-2 sm:hidden"
+        style={{
+          paddingTop: 'calc(var(--safe-top) + 8px)',
+        }}
+      >
+        <div className="flex items-center justify-between gap-2">
+          {/* Cụm Trái: Logo + Tên ngắn + Thống kê thu gọn */}
+          <div className="glass-panel pointer-events-auto flex min-w-0 flex-1 items-center justify-between gap-2 rounded-2xl px-2.5 py-1.5">
+            <div className="flex min-w-0 items-center gap-2">
+              <button
                 type="button"
-                whileHover={{ y: -1, scale: 1.04 }}
-                whileTap={{ scale: 0.96 }}
                 onClick={stage === 'map' ? onBackToGlobe : onFlyOverview}
-                title={
-                  stage === 'map'
-                    ? 'Về địa cầu 3D tự xoay'
-                    : 'Xem bản đồ chi tiết'
-                }
-                className="flex h-[46px] w-[46px] shrink-0 items-center justify-center rounded-[14px] border border-white/95 bg-white/90 p-1.5 shadow-[0_6px_16px_rgba(43,143,208,0.18)] ring-1 ring-[#2b8fd0]/20 cursor-pointer"
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-white bg-white p-1 shadow-xs ring-1 ring-[#2b8fd0]/20"
               >
                 {!logoError ? (
                   <div className="h-full w-full overflow-hidden">
@@ -610,299 +819,585 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
                       src={logoUrl}
                       alt={companyName}
                       onError={() => setLogoError(true)}
-                      className="h-[132%] w-full object-cover object-top select-none"
+                      className="h-[132%] w-full object-cover object-top"
                     />
                   </div>
                 ) : (
-                  <Globe2 className="h-6 w-6 text-[#2b8fd0]" />
+                  <Globe2 className="h-5 w-5 text-[#2b8fd0]" />
                 )}
-              </motion.button>
+              </button>
 
-              <div>
-                <div className="font-display text-xs font-extrabold tracking-tight text-[#0f2a24] sm:text-sm">
-                  {companyName}
+              <button
+                type="button"
+                onClick={() => setIsMobileStatsExpanded((p) => !p)}
+                className="min-w-0 text-left"
+              >
+                <div className="font-display truncate text-xs font-extrabold text-[#0f2a24]">
+                  Thái Việt Corp
                 </div>
-                <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px] font-medium text-emerald-950/70">
-                  <button
-                    type="button"
-                    onClick={onFlyToHub}
-                    className="inline-flex items-center gap-1 font-bold text-[#2b8fd0] hover:text-[#d9261c] hover:underline cursor-pointer"
-                  >
-                    <CuteCategoryIcon category="hub" className="h-3.5 w-3.5" />
-                    {centralHub.name}
-                  </button>
+                <div className="mt-0.5 flex items-center gap-1.5 text-[11px] font-extrabold">
+                  <span className="text-[#0f2a24]">{farms.length} trại</span>
+                  <span className="text-emerald-950/30">·</span>
+                  <span className="text-[#ea580c]">{chickenCount} gà</span>
+                  <span className="text-[#e11d48]">{pigCount} heo</span>
+                  {isMobileStatsExpanded ? (
+                    <ChevronUp className="h-3 w-3 text-[#2b8fd0]" />
+                  ) : (
+                    <ChevronDown className="h-3 w-3 text-[#2b8fd0]" />
+                  )}
                 </div>
-              </div>
-            </div>
-
-            {/* Chỉ số Thống kê (Tổng số trại, Theo loại có icon dễ thương, Tổng khoảng cách) */}
-            <div className="flex flex-wrap items-center gap-3.5 sm:gap-5 text-xs">
-              <div>
-                <div className="text-[11px] font-medium text-emerald-950/65">
-                  Tổng trại
-                </div>
-                <div className="text-base font-extrabold text-[#0f2a24] sm:text-lg">
-                  <CountUp end={farms.length} />
-                </div>
-              </div>
-
-              <div className="h-7 w-px bg-emerald-950/10" />
-
-              <div className="flex items-center gap-3.5">
-                <div className="flex items-center gap-1.5">
-                  <CuteCategoryIcon
-                    category="chicken"
-                    className="h-4 w-4 text-[#fb923c]"
-                  />
-                  <div>
-                    <div className="text-[10px] font-semibold text-[#ea580c]">
-                      Trại gà
-                    </div>
-                    <div className="text-sm font-extrabold text-[#ea580c]">
-                      <CountUp end={chickenCount} />
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-1.5">
-                  <CuteCategoryIcon
-                    category="pig"
-                    className="h-4 w-4 text-[#fb7185]"
-                  />
-                  <div>
-                    <div className="text-[10px] font-semibold text-[#e11d48]">
-                      Trại heo
-                    </div>
-                    <div className="text-sm font-extrabold text-[#e11d48]">
-                      <CountUp end={pigCount} />
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-1.5">
-                  <CuteCategoryIcon
-                    category="other"
-                    className="h-4 w-4 text-[#14b8a6]"
-                  />
-                  <div>
-                    <div className="text-[10px] font-semibold text-[#0d9488]">
-                      Khác
-                    </div>
-                    <div className="text-sm font-extrabold text-[#0d9488]">
-                      <CountUp end={otherCount} />
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div className="hidden h-7 w-px bg-emerald-950/10 md:block" />
-
-              <div className="hidden md:block">
-                <div className="text-[11px] font-medium text-emerald-950/65">
-                  Tổng khoảng cách
-                </div>
-                <div className="text-base font-extrabold text-[#2b8fd0]">
-                  <CountUp end={totalDistanceKm} decimals={1} suffix=" km" />
-                </div>
-              </div>
+              </button>
             </div>
           </div>
-        </motion.div>
 
-        {/* Khối Phải: Chỉ còn 3 nút chính ("TOUR TỰ ĐỘNG", nút tròn La bàn, nút tròn ⚙ "Tùy chỉnh" + huy hiệu nhỏ "QUẢN TRỊ") */}
+          {/* Cụm Phải: Nút tròn La bàn (44x44) + Nút tròn ⚙ Tùy chỉnh (44x44) */}
+          <div className="pointer-events-auto flex shrink-0 items-center gap-1.5">
+            <button
+              type="button"
+              onClick={onFlyOverview}
+              title="Xem bản đồ chi tiết"
+              className="glass-panel flex h-11 w-11 items-center justify-center rounded-full text-[#2b8fd0]"
+            >
+              <Compass className="h-5 w-5" />
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setIsSettingsOpen((p) => !p)}
+              title="Tùy chỉnh"
+              className={`relative flex h-11 w-11 items-center justify-center rounded-full ${
+                isSettingsOpen
+                  ? 'bg-[#2b8fd0] text-white shadow-md'
+                  : 'glass-panel text-[#2b8fd0]'
+              }`}
+            >
+              <Settings className="h-5 w-5" />
+              <span
+                className={`absolute top-1 right-1 h-2.5 w-2.5 rounded-full ring-2 ring-white ${
+                  isSyncNormal ? 'bg-[#10b981]' : 'bg-[#f59e0b]'
+                }`}
+              />
+              {isAdmin && (
+                <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 rounded-full bg-[#10b981] px-1.5 text-[8px] font-extrabold text-white">
+                  QT
+                </span>
+              )}
+            </button>
+          </div>
+        </div>
+
+        {/* Bảng thống kê mở rộng trên điện thoại khi bấm vào chip thống kê */}
+        <AnimatePresence>
+          {isMobileStatsExpanded && (
+            <motion.div
+              initial={{ opacity: 0, y: -8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              className="glass-panel pointer-events-auto rounded-2xl p-3 text-xs"
+            >
+              <div className="mb-2 flex items-center justify-between border-b border-emerald-950/10 pb-2">
+                <span className="font-display font-extrabold text-[#0f2a24]">
+                  {companyName}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsMobileStatsExpanded(false);
+                    onFlyToHub();
+                  }}
+                  className="inline-flex items-center gap-1 font-extrabold text-[#2b8fd0]"
+                >
+                  <CuteCategoryIcon category="hub" className="h-3.5 w-3.5" />
+                  <span>Xem Nhà máy TT</span>
+                </button>
+              </div>
+              <div className="grid grid-cols-4 gap-2 text-center">
+                <div className="rounded-xl bg-white/75 p-1.5">
+                  <div className="text-[10px] font-semibold text-emerald-950/60">
+                    Tổng trại
+                  </div>
+                  <div className="text-sm font-extrabold text-[#0f2a24]">
+                    {farms.length}
+                  </div>
+                </div>
+                <div className="rounded-xl bg-white/75 p-1.5">
+                  <div className="text-[10px] font-semibold text-[#ea580c]">
+                    Trại gà
+                  </div>
+                  <div className="text-sm font-extrabold text-[#ea580c]">
+                    {chickenCount}
+                  </div>
+                </div>
+                <div className="rounded-xl bg-white/75 p-1.5">
+                  <div className="text-[10px] font-semibold text-[#e11d48]">
+                    Trại heo
+                  </div>
+                  <div className="text-sm font-extrabold text-[#e11d48]">
+                    {pigCount}
+                  </div>
+                </div>
+                <div className="rounded-xl bg-white/75 p-1.5">
+                  <div className="text-[10px] font-semibold text-[#0d9488]">
+                    Khác
+                  </div>
+                  <div className="text-sm font-extrabold text-[#0d9488]">
+                    {otherCount}
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+
+      {/* BOTTOM DOCK TRÊN ĐIỆN THOẠI DỌC (< 640px) - Tự ẩn khi đang mở Card thông tin để không đè nhau */}
+      {!hasActiveCard && (
+        <div
+          className="pointer-events-none fixed inset-x-0 bottom-0 z-20 flex flex-col gap-2 px-2.5 sm:hidden"
+          style={{
+            paddingBottom: 'calc(var(--safe-bottom) + 10px)',
+          }}
+        >
+          {/* Hàng chip lọc cuộn ngang ngay phía trên Bottom Dock */}
+          <div className="pointer-events-auto flex items-center justify-center gap-1.5 overflow-x-auto py-0.5 no-scrollbar">
+            <button
+              type="button"
+              onClick={onFlyToHub}
+              className="glass-panel flex min-h-[38px] shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-extrabold text-[#2b8fd0] shadow-xs"
+            >
+              <CuteCategoryIcon category="hub" className="h-4 w-4" />
+              <span>Nhà máy TT</span>
+            </button>
+
+            {categoryButtons.map((btn) => {
+              const isActive = activeCategories[btn.key];
+              return (
+                <button
+                  key={btn.key}
+                  type="button"
+                  onClick={() => onToggleCategory(btn.key)}
+                  className={`flex min-h-[38px] shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-bold transition-all ${
+                    isActive
+                      ? 'glass-panel bg-white/95 text-[#0f2a24] shadow-xs ring-1 ring-[#2b8fd0]/25'
+                      : 'glass-panel bg-white/60 text-emerald-950/45 opacity-65'
+                  }`}
+                >
+                  <CuteCategoryIcon category={btn.key} className="h-4 w-4" />
+                  <span>{btn.label}</span>
+                  <span className="font-mono-tabular text-[11px] opacity-70">
+                    ({btn.count})
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Thanh Dock chính: Nút Tìm kiếm (bung rộng khi bấm) + Nút TOUR TỰ ĐỘNG */}
+          <div className="pointer-events-auto flex items-center gap-2">
+            {isMobileSearchExpanded || searchQuery ? (
+              <div className="glass-panel relative flex h-11 flex-1 items-center rounded-full bg-white/95 px-3.5 shadow-md">
+                <Search className="h-4 w-4 shrink-0 text-[#2b8fd0]" />
+                <input
+                  ref={mobileSearchInputRef}
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => onSearchChange(e.target.value)}
+                  onKeyDown={handleSearchKeyDown}
+                  placeholder="Tìm tên trại (Enter bay tới)..."
+                  autoFocus
+                  className="h-full w-full bg-transparent px-2.5 text-xs font-semibold text-[#0f2a24] placeholder-emerald-950/45 focus:outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    onSearchChange('');
+                    setIsMobileSearchExpanded(false);
+                  }}
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-emerald-950/55"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsMobileSearchExpanded(true);
+                    setTimeout(() => mobileSearchInputRef.current?.focus(), 60);
+                  }}
+                  aria-label="Tìm kiếm trang trại"
+                  className="glass-panel flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-[#2b8fd0] shadow-md"
+                >
+                  <Search className="h-5 w-5" />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={onToggleTour}
+                  className={`flex h-11 flex-1 items-center justify-center gap-2 rounded-full px-5 text-xs font-extrabold tracking-wide text-white shadow-lg ${
+                    isTourRunning
+                      ? 'bg-[#d9261c]'
+                      : 'bg-gradient-to-r from-[#2b8fd0] to-[#10b981]'
+                  }`}
+                >
+                  {isTourRunning ? (
+                    <>
+                      <Square className="h-3.5 w-3.5 fill-current" />
+                      <span>
+                        DỪNG TOUR ({tourIndex + 1}/{tourTotal})
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <Play className="h-3.5 w-3.5 fill-current" />
+                      <span>TOUR TỰ ĐỘNG</span>
+                    </>
+                  )}
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* =====================================================================
+          GIAO DIỆN IPAD / TABLET & LAPTOP (>= 640px)
+         ===================================================================== */}
+      <div
+        className="pointer-events-none fixed inset-x-0 top-0 z-20 hidden flex-col gap-2.5 p-3 sm:flex sm:p-4"
+        style={{
+          paddingTop: 'max(14px, var(--safe-top))',
+          paddingLeft: 'max(16px, var(--safe-left))',
+          paddingRight: 'max(16px, var(--safe-right))',
+        }}
+      >
+        {/* HÀNG 1: Bảng Logo + Thống kê bên trái | 3 Nút gọn gàng bên phải */}
+        <div className="flex flex-wrap items-start justify-between gap-2.5">
+          {/* Khối Trái: Logo Hoa Sen Thái Việt + Tên công ty + Bảng thống kê */}
+          <motion.div
+            initial={{ opacity: 0, y: -16 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ type: 'spring', stiffness: 240, damping: 24 }}
+            className="glass-panel pointer-events-auto relative overflow-hidden rounded-[22px] px-3.5 py-2.5 sm:px-4"
+          >
+            <PanelParticles count={6} color="#facc15" disabled={liteMode} />
+
+            <div className="relative z-10 flex flex-wrap items-center gap-3.5 sm:gap-5">
+              {/* Thương hiệu: Khung kính trắng chứa phần Hoa sen + Tên công ty */}
+              <div className="flex items-center gap-3 border-r border-emerald-950/10 pr-3.5">
+                <motion.button
+                  type="button"
+                  whileHover={{ y: -1, scale: 1.04 }}
+                  whileTap={{ scale: 0.96 }}
+                  onClick={stage === 'map' ? onBackToGlobe : onFlyOverview}
+                  title={
+                    stage === 'map'
+                      ? 'Về địa cầu 3D tự xoay'
+                      : 'Xem bản đồ chi tiết'
+                  }
+                  className="flex h-[46px] w-[46px] shrink-0 items-center justify-center rounded-[14px] border border-white/95 bg-white/90 p-1.5 shadow-[0_6px_16px_rgba(43,143,208,0.18)] ring-1 ring-[#2b8fd0]/20 cursor-pointer"
+                >
+                  {!logoError ? (
+                    <div className="h-full w-full overflow-hidden">
+                      <img
+                        src={logoUrl}
+                        alt={companyName}
+                        onError={() => setLogoError(true)}
+                        className="h-[132%] w-full object-cover object-top select-none"
+                      />
+                    </div>
+                  ) : (
+                    <Globe2 className="h-6 w-6 text-[#2b8fd0]" />
+                  )}
+                </motion.button>
+
+                <div>
+                  <div className="font-display text-xs font-extrabold tracking-tight text-[#0f2a24] sm:text-sm">
+                    {companyName}
+                  </div>
+                  <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px] font-medium text-emerald-950/70">
+                    <button
+                      type="button"
+                      onClick={onFlyToHub}
+                      title="Bấm để xem mạng lưới kết nối từ Nhà máy Trung tâm"
+                      className="inline-flex items-center gap-1 font-bold text-[#2b8fd0] hover:text-[#d9261c] hover:underline cursor-pointer"
+                    >
+                      <CuteCategoryIcon category="hub" className="h-3.5 w-3.5" />
+                      {centralHub.name}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Chỉ số Thống kê */}
+              <div className="flex flex-wrap items-center gap-3.5 text-xs sm:gap-5">
+                <div>
+                  <div className="text-[11px] font-medium text-emerald-950/65">
+                    Tổng trại
+                  </div>
+                  <div className="text-base font-extrabold text-[#0f2a24] sm:text-lg">
+                    <CountUp end={farms.length} />
+                  </div>
+                </div>
+
+                <div className="h-7 w-px bg-emerald-950/10" />
+
+                <div className="flex items-center gap-3.5">
+                  <div className="flex items-center gap-1.5">
+                    <CuteCategoryIcon
+                      category="chicken"
+                      className="h-4 w-4 text-[#fb923c]"
+                    />
+                    <div>
+                      <div className="text-[10px] font-semibold text-[#ea580c]">
+                        Trại gà
+                      </div>
+                      <div className="text-sm font-extrabold text-[#ea580c]">
+                        <CountUp end={chickenCount} />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-1.5">
+                    <CuteCategoryIcon
+                      category="pig"
+                      className="h-4 w-4 text-[#fb7185]"
+                    />
+                    <div>
+                      <div className="text-[10px] font-semibold text-[#e11d48]">
+                        Trại heo
+                      </div>
+                      <div className="text-sm font-extrabold text-[#e11d48]">
+                        <CountUp end={pigCount} />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-1.5">
+                    <CuteCategoryIcon
+                      category="other"
+                      className="h-4 w-4 text-[#14b8a6]"
+                    />
+                    <div>
+                      <div className="text-[10px] font-semibold text-[#0d9488]">
+                        Khác
+                      </div>
+                      <div className="text-sm font-extrabold text-[#0d9488]">
+                        <CountUp end={otherCount} />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="hidden h-7 w-px bg-emerald-950/10 lg:block" />
+
+                <div className="hidden lg:block">
+                  <div className="text-[11px] font-medium text-emerald-950/65">
+                    Tổng khoảng cách
+                  </div>
+                  <div className="text-base font-extrabold text-[#2b8fd0]">
+                    <CountUp end={totalDistanceKm} decimals={1} suffix=" km" />
+                  </div>
+                </div>
+              </div>
+            </div>
+          </motion.div>
+
+          {/* Khối Phải: 3 nút chính ("TOUR TỰ ĐỘNG", nút tròn La bàn, nút tròn ⚙ "Tùy chỉnh" + huy hiệu "QUẢN TRỊ") */}
+          <motion.div
+            initial={{ opacity: 0, y: -16 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{
+              type: 'spring',
+              stiffness: 240,
+              damping: 24,
+              delay: 0.04,
+            }}
+            className="pointer-events-auto flex items-center gap-2.5"
+          >
+            {/* 1. Nút chính nổi bật: TOUR TỰ ĐỘNG (cao 44px chuẩn chạm) */}
+            <motion.button
+              type="button"
+              whileHover={{ y: -2 }}
+              whileTap={{ scale: 0.96 }}
+              onClick={onToggleTour}
+              className={`flex h-11 shrink-0 items-center gap-2 rounded-full px-4 text-xs font-extrabold tracking-wide whitespace-nowrap shadow-md transition-all cursor-pointer ${
+                isTourRunning
+                  ? 'bg-[#d9261c] text-white shadow-[0_8px_20px_rgba(217,38,28,0.38)]'
+                  : 'bg-gradient-to-r from-[#2b8fd0] to-[#10b981] text-white shadow-[0_8px_20px_rgba(43,143,208,0.3)]'
+              }`}
+            >
+              {isTourRunning ? (
+                <>
+                  <Square className="h-3.5 w-3.5 fill-current" />
+                  <span>
+                    DỪNG TOUR ({tourIndex + 1}/{tourTotal})
+                  </span>
+                </>
+              ) : (
+                <>
+                  <Play className="h-3.5 w-3.5 fill-current" />
+                  <span>TOUR TỰ ĐỘNG</span>
+                </>
+              )}
+            </motion.button>
+
+            {/* 2. Nút tròn La bàn (44x44px) */}
+            <motion.button
+              type="button"
+              whileHover={{ y: -2 }}
+              whileTap={{ scale: 0.95 }}
+              onClick={onFlyOverview}
+              title="Xem bản đồ chi tiết toàn mạng lưới trang trại"
+              className="glass-panel flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-[#0f2a24] transition-colors hover:border-[#2b8fd0] hover:bg-white/95 cursor-pointer"
+            >
+              <Compass className="h-4 w-4 text-[#2b8fd0]" />
+            </motion.button>
+
+            {/* Huy hiệu nhỏ "QUẢN TRỊ" cạnh nút ⚙ khi đang ở chế độ quản trị */}
+            {isAdmin && (
+              <motion.button
+                type="button"
+                whileHover={{ y: -1 }}
+                whileTap={{ scale: 0.96 }}
+                onClick={() => setIsSettingsOpen((prev) => !prev)}
+                title="Đang ở chế độ quản trị · Bấm để mở Tùy chỉnh"
+                className="flex h-9 shrink-0 items-center gap-1 rounded-full border border-[#10b981]/40 bg-[#10b981] px-3 text-[10px] font-extrabold tracking-wider whitespace-nowrap text-white shadow-sm cursor-pointer"
+              >
+                <ShieldCheck className="h-3.5 w-3.5" />
+                <span>QUẢN TRỊ</span>
+              </motion.button>
+            )}
+
+            {/* 3. Nút tròn ⚙ "Tùy chỉnh" (44x44px) */}
+            <div ref={settingsWrapperRef} className="relative">
+              <motion.button
+                type="button"
+                whileHover={{ y: -2 }}
+                whileTap={{ scale: 0.95 }}
+                onClick={() => setIsSettingsOpen((prev) => !prev)}
+                title="Tùy chỉnh"
+                aria-label="Tùy chỉnh"
+                aria-expanded={isSettingsOpen}
+                className={`relative flex h-11 w-11 shrink-0 items-center justify-center rounded-full transition-all cursor-pointer ${
+                  isSettingsOpen
+                    ? 'bg-[#2b8fd0] text-white shadow-[0_8px_20px_rgba(43,143,208,0.35)]'
+                    : 'glass-panel text-[#0f2a24] hover:border-[#2b8fd0] hover:bg-white/95'
+                }`}
+              >
+                <Settings
+                  className={`h-4 w-4 transition-transform duration-300 ${
+                    isSettingsOpen ? 'rotate-90 text-white' : 'text-[#2b8fd0]'
+                  }`}
+                />
+
+                <span
+                  title={syncState.statusText}
+                  className={`absolute top-0.5 right-0.5 h-2.5 w-2.5 rounded-full ring-2 ring-white ${
+                    isSyncNormal ? 'bg-[#10b981]' : 'bg-[#f59e0b]'
+                  }`}
+                />
+              </motion.button>
+
+              {/* PANEL "TÙY CHỈNH" THẢ XUỐNG NGAY DƯỚI NÚT ⚙ (TRÊN DESKTOP / TABLET) */}
+              <AnimatePresence>
+                {isSettingsOpen && (
+                  <motion.div
+                    initial={{ opacity: 0, y: -10, scale: 0.95 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: -10, scale: 0.95 }}
+                    transition={{ type: 'spring', stiffness: 320, damping: 26 }}
+                    className="glass-panel absolute top-13 right-0 z-50 hidden max-h-[calc(100dvh-90px)] w-[350px] overflow-y-auto rounded-[20px] border border-white/95 bg-white/92 p-4 shadow-[0_24px_60px_rgba(15,42,36,0.22)] backdrop-blur-2xl sm:block"
+                  >
+                    <div className="mb-3 flex items-center justify-between border-b border-emerald-950/10 pb-2">
+                      <div className="flex items-center gap-1.5 text-xs font-extrabold text-[#0f2a24]">
+                        <Settings className="h-3.5 w-3.5 text-[#2b8fd0]" />
+                        <span>TÙY CHỈNH HỆ THỐNG</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setIsSettingsOpen(false)}
+                        className="flex h-7 w-7 items-center justify-center rounded-full text-emerald-950/50 hover:bg-emerald-950/5 hover:text-[#d9261c] cursor-pointer"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </div>
+
+                    {renderSettingsSections()}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          </motion.div>
+        </div>
+
+        {/* HÀNG 2: Ô tìm kiếm + Chip lọc (Trại gà / Trại heo / Khác) */}
         <motion.div
-          initial={{ opacity: 0, y: -16 }}
+          initial={{ opacity: 0, y: -10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{
             type: 'spring',
             stiffness: 240,
             damping: 24,
-            delay: 0.04,
+            delay: 0.08,
           }}
-          className="pointer-events-auto flex items-center gap-2.5"
+          className="pointer-events-auto flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar"
         >
-          {/* 1. Nút chính nổi bật: TOUR TỰ ĐỘNG */}
-          <motion.button
-            type="button"
-            whileHover={{ y: -2 }}
-            whileTap={{ scale: 0.96 }}
-            onClick={onToggleTour}
-            className={`flex h-10 items-center gap-2 rounded-full px-4 text-xs font-extrabold tracking-wide shadow-md transition-all cursor-pointer whitespace-nowrap shrink-0 ${
-              isTourRunning
-                ? 'bg-[#d9261c] text-white shadow-[0_8px_20px_rgba(217,38,28,0.38)]'
-                : 'bg-gradient-to-r from-[#2b8fd0] to-[#10b981] text-white shadow-[0_8px_20px_rgba(43,143,208,0.3)]'
-            }`}
-          >
-            {isTourRunning ? (
-              <>
-                <Square className="h-3.5 w-3.5 fill-current" />
-                <span>
-                  DỪNG TOUR ({tourIndex + 1}/{tourTotal})
-                </span>
-              </>
-            ) : (
-              <>
-                <Play className="h-3.5 w-3.5 fill-current" />
-                <span>TOUR TỰ ĐỘNG</span>
-              </>
+          {/* Ô tìm kiếm */}
+          <div className="relative flex shrink-0 items-center">
+            <Search className="pointer-events-none absolute left-3.5 h-4 w-4 text-[#2b8fd0]" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => onSearchChange(e.target.value)}
+              onKeyDown={handleSearchKeyDown}
+              placeholder="Tìm tên trại (Enter bay tới)..."
+              className="glass-panel h-10 w-52 rounded-full pr-8 pl-9 text-xs font-medium text-[#0f2a24] placeholder-emerald-950/45 transition-all focus:w-64 focus:border-[#2b8fd0] focus:bg-white/95 focus:outline-none lg:w-60 lg:focus:w-72"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => onSearchChange('')}
+                className="absolute right-2.5 text-emerald-950/50 hover:text-[#d9261c] cursor-pointer"
+              >
+                <X className="h-4 w-4" />
+              </button>
             )}
-          </motion.button>
+          </div>
 
-          {/* 2. Nút tròn La bàn (xem bản đồ chi tiết) */}
-          <motion.button
-            type="button"
-            whileHover={{ y: -2 }}
-            whileTap={{ scale: 0.95 }}
-            onClick={onFlyOverview}
-            title="Xem bản đồ chi tiết toàn mạng lưới trang trại"
-            className="glass-panel flex h-10 w-10 items-center justify-center rounded-full text-[#0f2a24] transition-colors hover:border-[#2b8fd0] hover:bg-white/95 cursor-pointer shrink-0"
-          >
-            <Compass className="h-4 w-4 text-[#2b8fd0]" />
-          </motion.button>
-
-          {/* Huy hiệu nhỏ "QUẢN TRỊ" cạnh nút ⚙ khi đang ở chế độ quản trị (bấm vào mở panel Tùy chỉnh) */}
-          {isAdmin && (
-            <motion.button
-              type="button"
-              whileHover={{ y: -1 }}
-              whileTap={{ scale: 0.96 }}
-              onClick={() => setIsSettingsOpen((prev) => !prev)}
-              title="Đang ở chế độ quản trị · Bấm để mở Tùy chỉnh"
-              className="flex h-8 items-center gap-1 rounded-full border border-[#10b981]/40 bg-[#10b981] px-2.5 text-[10px] font-extrabold tracking-wider text-white shadow-sm cursor-pointer whitespace-nowrap shrink-0"
-            >
-              <ShieldCheck className="h-3 w-3" />
-              <span>QUẢN TRỊ</span>
-            </motion.button>
-          )}
-
-          {/* 3. Nút tròn ⚙ "Tùy chỉnh" có chấm trạng thái đồng bộ nhỏ */}
-          <div ref={settingsWrapperRef} className="relative">
-            <motion.button
-              type="button"
-              whileHover={{ y: -2 }}
-              whileTap={{ scale: 0.95 }}
-              onClick={() => setIsSettingsOpen((prev) => !prev)}
-              title="Tùy chỉnh"
-              aria-label="Tùy chỉnh"
-              aria-expanded={isSettingsOpen}
-              className={`relative flex h-10 w-10 items-center justify-center rounded-full transition-all cursor-pointer shrink-0 ${
-                isSettingsOpen
-                  ? 'bg-[#2b8fd0] text-white shadow-[0_8px_20px_rgba(43,143,208,0.35)]'
-                  : 'glass-panel text-[#0f2a24] hover:border-[#2b8fd0] hover:bg-white/95'
-              }`}
-            >
-              <Settings
-                className={`h-4 w-4 transition-transform duration-300 ${
-                  isSettingsOpen ? 'rotate-90 text-white' : 'text-[#2b8fd0]'
-                }`}
-              />
-
-              {/* Chấm trạng thái nhỏ: xanh lá khi đồng bộ bình thường, vàng khi lỗi đồng bộ hoặc đang dùng dữ liệu lưu cũ */}
-              <span
-                title={syncState.statusText}
-                className={`absolute top-0.5 right-0.5 h-2.5 w-2.5 rounded-full ring-2 ring-white ${
-                  isSyncNormal ? 'bg-[#10b981]' : 'bg-[#f59e0b]'
-                }`}
-              />
-            </motion.button>
-
-            {/* PANEL "TÙY CHỈNH" THẢ XUỐNG NGAY DƯỚI NÚT ⚙ (TRÊN DESKTOP / TABLET) */}
-            <AnimatePresence>
-              {isSettingsOpen && (
-                <motion.div
-                  initial={{ opacity: 0, y: -10, scale: 0.95 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={{ opacity: 0, y: -10, scale: 0.95 }}
-                  transition={{ type: 'spring', stiffness: 320, damping: 26 }}
-                  className="glass-panel absolute top-12 right-0 z-50 hidden w-[340px] overflow-hidden rounded-[20px] border border-white/95 bg-white/88 p-4 shadow-[0_24px_60px_rgba(15,42,36,0.22)] backdrop-blur-2xl sm:block"
+          {/* Chip lọc theo loại trang trại */}
+          <div className="glass-panel flex shrink-0 items-center gap-1 rounded-full p-1">
+            {categoryButtons.map((btn) => {
+              const isActive = activeCategories[btn.key];
+              return (
+                <motion.button
+                  key={btn.key}
+                  type="button"
+                  whileHover={{ y: -1 }}
+                  whileTap={{ scale: 0.96 }}
+                  onClick={() => onToggleCategory(btn.key)}
+                  className={`flex min-h-[34px] shrink-0 items-center gap-1.5 rounded-full px-3.5 py-1 text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
+                    isActive
+                      ? 'bg-white text-[#0f2a24] shadow-xs ring-1 ring-[#2b8fd0]/20'
+                      : 'text-emerald-950/45 opacity-60 hover:opacity-90'
+                  }`}
                 >
-                  <div className="mb-3 flex items-center justify-between border-b border-emerald-950/10 pb-2">
-                    <div className="flex items-center gap-1.5 text-xs font-extrabold text-[#0f2a24]">
-                      <Settings className="h-3.5 w-3.5 text-[#2b8fd0]" />
-                      <span>TÙY CHỈNH HỆ THỐNG</span>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setIsSettingsOpen(false)}
-                      className="flex h-6 w-6 items-center justify-center rounded-full text-emerald-950/50 hover:bg-emerald-950/5 hover:text-[#d9261c] cursor-pointer"
-                    >
-                      <X className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-
-                  {renderSettingsSections()}
-                </motion.div>
-              )}
-            </AnimatePresence>
+                  <span style={{ color: btn.color }}>
+                    <CuteCategoryIcon category={btn.key} className="h-4 w-4" />
+                  </span>
+                  <span>{btn.label}</span>
+                  <span className="font-mono-tabular text-[11px] text-emerald-950/60">
+                    ({btn.count})
+                  </span>
+                </motion.button>
+              );
+            })}
           </div>
         </motion.div>
       </div>
 
-      {/* HÀNG 2: Ô tìm kiếm + Chip lọc (Trại gà / Trại heo / Khác) gọn gàng trên 1 hàng, cuộn ngang trên điện thoại */}
-      <motion.div
-        initial={{ opacity: 0, y: -10 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{
-          type: 'spring',
-          stiffness: 240,
-          damping: 24,
-          delay: 0.08,
-        }}
-        className="pointer-events-auto flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar"
-      >
-        {/* Ô tìm kiếm */}
-        <div className="relative flex shrink-0 items-center">
-          <Search className="pointer-events-none absolute left-3.5 h-3.5 w-3.5 text-[#2b8fd0]" />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => onSearchChange(e.target.value)}
-            onKeyDown={handleSearchKeyDown}
-            placeholder="Tìm tên trại (Enter bay tới)..."
-            className="glass-panel h-9 w-44 rounded-full pr-7 pl-9 text-xs font-medium text-[#0f2a24] placeholder-emerald-950/45 transition-all focus:w-56 focus:border-[#2b8fd0] focus:bg-white/95 focus:outline-none sm:w-56 sm:focus:w-68"
-          />
-          {searchQuery && (
-            <button
-              type="button"
-              onClick={() => onSearchChange('')}
-              className="absolute right-2.5 text-emerald-950/50 hover:text-[#d9261c] cursor-pointer"
-            >
-              <X className="h-3.5 w-3.5" />
-            </button>
-          )}
-        </div>
-
-        {/* Chip lọc theo loại trang trại (cuộn ngang trên điện thoại) */}
-        <div className="glass-panel flex shrink-0 items-center gap-1 rounded-full p-1">
-          {categoryButtons.map((btn) => {
-            const isActive = activeCategories[btn.key];
-            return (
-              <motion.button
-                key={btn.key}
-                type="button"
-                whileHover={{ y: -1 }}
-                whileTap={{ scale: 0.96 }}
-                onClick={() => onToggleCategory(btn.key)}
-                className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold transition-all cursor-pointer whitespace-nowrap shrink-0 ${
-                  isActive
-                    ? 'bg-white text-[#0f2a24] shadow-xs ring-1 ring-[#2b8fd0]/20'
-                    : 'text-emerald-950/45 opacity-60 hover:opacity-90'
-                }`}
-              >
-                <span style={{ color: btn.color }}>
-                  <CuteCategoryIcon category={btn.key} className="h-4 w-4" />
-                </span>
-                <span>{btn.label}</span>
-                <span className="font-mono-tabular text-[11px] text-emerald-950/60">
-                  ({btn.count})
-                </span>
-              </motion.button>
-            );
-          })}
-        </div>
-      </motion.div>
-
-      {/* PANEL "TÙY CHỈNH" DẠNG BOTTOM-SHEET VUỐT XUỐNG ĐỂ ĐÓNG TRÊN ĐIỆN THOẠI (< 640px) */}
+      {/* PANEL "TÙY CHỈNH" DẠNG BOTTOM-SHEET VUỐT XUỐNG ĐỂ ĐÓNG TRÊN ĐIỆN THOẠI DỌC (< 640px) */}
       <AnimatePresence>
         {isSettingsOpen && (
           <motion.div
@@ -922,9 +1417,11 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
               dragElastic={0.2}
               onDragEnd={handleSheetDragEnd}
               onClick={(e) => e.stopPropagation()}
-              className="glass-panel max-h-[85vh] w-full overflow-y-auto rounded-t-[24px] border-t border-white/95 bg-white/92 p-5 pb-7 shadow-[0_-18px_50px_rgba(15,42,36,0.22)] backdrop-blur-2xl"
+              className="glass-panel max-h-[calc(100dvh-24px)] w-full overflow-y-auto rounded-t-[24px] border-t border-white/95 bg-white/95 p-5 shadow-[0_-18px_50px_rgba(15,42,36,0.22)] backdrop-blur-2xl"
+              style={{
+                paddingBottom: 'calc(var(--safe-bottom) + 24px)',
+              }}
             >
-              {/* Thanh nắm kéo để vuốt xuống đóng */}
               <div className="mb-3 flex justify-center">
                 <div className="h-1.5 w-11 rounded-full bg-emerald-950/20" />
               </div>
@@ -937,7 +1434,7 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
                 <button
                   type="button"
                   onClick={() => setIsSettingsOpen(false)}
-                  className="flex h-7 w-7 items-center justify-center rounded-full border border-emerald-950/10 bg-white text-[#0f2a24]"
+                  className="flex h-8 w-8 items-center justify-center rounded-full border border-emerald-950/10 bg-white text-[#0f2a24]"
                 >
                   <X className="h-4 w-4" />
                 </button>
@@ -948,6 +1445,6 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
           </motion.div>
         )}
       </AnimatePresence>
-    </div>
+    </>
   );
 };
