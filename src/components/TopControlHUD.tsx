@@ -43,6 +43,11 @@ import {
   TimeOfDay,
 } from '../types';
 import { calculateDistanceKm } from '../utils/geo';
+import {
+  DropdownLocationItem,
+  normalizeMatchText,
+  sortLocationsForDropdown,
+} from '../utils/icons';
 import { CountUp } from './CountUp';
 import { CuteCategoryIcon, PanelParticles } from './CursorSpotlight';
 
@@ -55,6 +60,7 @@ interface TopControlHUDProps {
   searchQuery: string;
   onSearchChange: (q: string) => void;
   onSearchSubmit: () => void;
+  onSelectFarm: (farm: Farm) => void;
   activeCategories: Record<FarmCategory, boolean>;
   onToggleCategory: (cat: FarmCategory) => void;
   biosecurityRadius: number;
@@ -92,10 +98,10 @@ interface TopControlHUDProps {
  * BẢNG THỐNG KÊ & ĐIỀU KHIỂN ĐÁP ỨNG MỌI THIẾT BỊ (LAPTOP, IPAD, ĐIỆN THOẠI DỌC & NGANG)
  * - Laptop & iPad (>= 640px):
  *   + Hàng 1: Trái = Bảng Logo + Thống kê; Phải = 3 nút ("TOUR TỰ ĐỘNG", nút tròn La bàn, nút tròn ⚙ "Tùy chỉnh" + huy hiệu "QUẢN TRỊ").
- *   + Hàng 2: Ô tìm kiếm + Chip lọc (Trại gà / Trại heo / Khác).
+ *   + Hàng 2: Combobox / Searchable Dropdown "Tìm tên trại / địa điểm..." + Chip lọc (Trại gà / Trại heo / Khác).
  * - Điện thoại dọc (< 640px):
  *   + Thanh trên gọn: Logo + tên ngắn + chip thống kê thu gọn (bấm vào để mở rộng/thu gọn) + nút La bàn & nút ⚙ Tùy chỉnh (44x44px).
- *   + Thanh dưới (bottom dock): Chip lọc cuộn ngang nằm ngay trên dock + nút kính lúp tìm kiếm (bấm bung rộng) + nút "TOUR TỰ ĐỘNG".
+ *   + Thanh dưới (bottom dock): Chip lọc cuộn ngang nằm ngay trên dock + nút kính lúp tìm kiếm (bấm bung rộng & xổ lên danh sách) + nút "TOUR TỰ ĐỘNG".
  * - Điện thoại ngang (chiều cao < 500px):
  *   + Thu gọn thanh trên thành 1 dòng mỏng, các nút chỉ hiện icon 44x44px để không tràn chiều dọc.
  */
@@ -108,6 +114,7 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
   searchQuery,
   onSearchChange,
   onSearchSubmit,
+  onSelectFarm,
   activeCategories,
   onToggleCategory,
   biosecurityRadius,
@@ -144,9 +151,13 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isMobileStatsExpanded, setIsMobileStatsExpanded] = useState(false);
   const [isMobileSearchExpanded, setIsMobileSearchExpanded] = useState(false);
+  const [isLocationDropdownOpen, setIsLocationDropdownOpen] = useState(false);
   const [isLandscapeShort, setIsLandscapeShort] = useState(false);
 
   const settingsWrapperRef = useRef<HTMLDivElement | null>(null);
+  const desktopDropdownWrapperRef = useRef<HTMLDivElement | null>(null);
+  const landscapeDropdownWrapperRef = useRef<HTMLDivElement | null>(null);
+  const mobileDropdownWrapperRef = useRef<HTMLDivElement | null>(null);
   const mobileSearchInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -176,6 +187,88 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
 
   const isSyncNormal =
     Boolean(syncState.lastSyncedTime) && !syncState.isOfflineFallback;
+
+  // Xây dựng danh sách TẤT CẢ các địa điểm (Nhà máy trung tâm + tất cả trang trại/văn phòng/kho/rửa xe)
+  // được sắp xếp theo đúng 7 thứ tự ưu tiên bắt buộc từ trên xuống dưới bằng sortLocationsForDropdown
+  const sortedAllLocations = React.useMemo(() => {
+    const rawItems: Array<DropdownLocationItem & { farm?: Farm }> = [
+      {
+        id: '__CENTRAL_HUB__',
+        name: centralHub.name,
+        type: centralHub.subtitle || 'Nhà máy trung tâm',
+        category: 'hub',
+        subType: 'hub',
+        lat: centralHub.lat,
+        lng: centralHub.lng,
+        isHub: true,
+      },
+      ...farms.map((f) => ({
+        id: f.id,
+        name: f.name,
+        type: f.type,
+        category: f.category,
+        subType: f.subType || f.category,
+        lat: f.lat,
+        lng: f.lng,
+        isHub: false,
+        farm: f,
+      })),
+    ];
+
+    return sortLocationsForDropdown(rawItems);
+  }, [farms, centralHub]);
+
+  // Lọc nhanh danh sách khi người dùng gõ chữ (nếu chưa gõ gì thì hiển thị TẤT CẢ các điểm)
+  const filteredDropdownLocations = React.useMemo(() => {
+    const normQ = normalizeMatchText(searchQuery);
+    if (!normQ) return sortedAllLocations;
+    return sortedAllLocations.filter((item) => {
+      const hay = normalizeMatchText(
+        `${item.name} ${item.type || ''} ${item.groupLabel || ''}`
+      );
+      return hay.includes(normQ);
+    });
+  }, [sortedAllLocations, searchQuery]);
+
+  const handleSelectDropdownLocation = (
+    item: (typeof sortedAllLocations)[number]
+  ) => {
+    setIsLocationDropdownOpen(false);
+    setIsMobileSearchExpanded(false);
+    onSearchChange('');
+    if (item.isHub || item.id === '__CENTRAL_HUB__') {
+      onFlyToHub();
+    } else if (item.farm) {
+      onSelectFarm(item.farm);
+    }
+  };
+
+  useEffect(() => {
+    if (!isLocationDropdownOpen) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setIsLocationDropdownOpen(false);
+      }
+    };
+
+    const handlePointerDown = (e: MouseEvent) => {
+      const target = e.target as Node;
+      const inDesktop = desktopDropdownWrapperRef.current?.contains(target);
+      const inLandscape = landscapeDropdownWrapperRef.current?.contains(target);
+      const inMobile = mobileDropdownWrapperRef.current?.contains(target);
+      if (!inDesktop && !inLandscape && !inMobile) {
+        setIsLocationDropdownOpen(false);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    document.addEventListener('mousedown', handlePointerDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      document.removeEventListener('mousedown', handlePointerDown);
+    };
+  }, [isLocationDropdownOpen]);
 
   useEffect(() => {
     if (!isSettingsOpen) return;
@@ -207,10 +300,120 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
   const handleSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
       e.preventDefault();
-      onSearchSubmit();
-      setIsMobileSearchExpanded(false);
+      if (filteredDropdownLocations.length > 0) {
+        handleSelectDropdownLocation(filteredDropdownLocations[0]);
+      } else {
+        onSearchSubmit();
+        setIsLocationDropdownOpen(false);
+        setIsMobileSearchExpanded(false);
+      }
     }
   };
+
+  /**
+   * Hiển thị danh sách xổ xuống tất cả các điểm theo thứ tự ưu tiên 1 -> 7
+   * Mỗi dòng cao tối thiểu 44px dễ chạm trên cả điện thoại lẫn máy tính.
+   */
+  const renderLocationDropdownList = (openUpward = false) => (
+    <AnimatePresence>
+      {isLocationDropdownOpen && (
+        <motion.div
+          initial={{ opacity: 0, y: openUpward ? 10 : -8, scale: 0.97 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          exit={{ opacity: 0, y: openUpward ? 10 : -8, scale: 0.97 }}
+          transition={{ duration: 0.16 }}
+          className={`glass-panel pointer-events-auto absolute z-50 overflow-hidden rounded-2xl border border-white/95 bg-white/96 shadow-[0_22px_55px_rgba(15,42,36,0.24)] backdrop-blur-2xl ${
+            openUpward
+              ? 'inset-x-0 bottom-13 max-h-[52dvh]'
+              : 'top-11 left-0 w-[320px] max-h-[60dvh] sm:w-[360px]'
+          }`}
+        >
+          <div className="flex items-center justify-between border-b border-emerald-950/10 bg-sky-50/70 px-3 py-1.5 text-[11px] font-extrabold text-[#0f2a24]">
+            <span>
+              Danh sách địa điểm ({filteredDropdownLocations.length}/
+              {sortedAllLocations.length})
+            </span>
+            <span className="text-[10px] font-semibold text-[#2b8fd0]">
+              Theo thứ tự ưu tiên
+            </span>
+          </div>
+          <div
+            className={`overflow-y-auto overscroll-contain p-1.5 ${
+              openUpward ? 'max-h-[calc(52dvh-34px)]' : 'max-h-[calc(60dvh-34px)]'
+            }`}
+          >
+            {filteredDropdownLocations.length === 0 ? (
+              <div className="px-3 py-6 text-center text-xs font-semibold text-emerald-950/55">
+                Không tìm thấy địa điểm nào khớp với &ldquo;{searchQuery}&rdquo;
+              </div>
+            ) : (
+              filteredDropdownLocations.map((item, idx) => {
+                const prevGroupLabel =
+                  idx > 0 ? filteredDropdownLocations[idx - 1].groupLabel : null;
+                const showGroupHeader = item.groupLabel !== prevGroupLabel;
+                const iconCat = item.isHub
+                  ? 'hub'
+                  : item.subType || item.category;
+
+                return (
+                  <React.Fragment key={item.id}>
+                    {showGroupHeader && (
+                      <div className="mt-1.5 mb-0.5 flex items-center justify-between px-2.5 py-1 text-[10px] font-extrabold tracking-wider text-[#2b8fd0] uppercase first:mt-0">
+                        <span>{item.groupLabel}</span>
+                      </div>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => handleSelectDropdownLocation(item)}
+                      className={`flex min-h-[44px] w-full items-center justify-between gap-2.5 rounded-xl px-2.5 py-2 text-left text-xs transition-colors cursor-pointer ${
+                        item.isHub
+                          ? 'bg-gradient-to-r from-sky-50/90 to-amber-50/80 font-extrabold text-[#0f2a24] ring-1 ring-[#2b8fd0]/25 hover:from-sky-100/90 hover:to-amber-100/80'
+                          : 'font-bold text-[#0f2a24] hover:bg-sky-50/85'
+                      }`}
+                    >
+                      <div className="flex min-w-0 items-center gap-2.5">
+                        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-emerald-950/10 bg-white shadow-2xs">
+                          <CuteCategoryIcon
+                            category={iconCat}
+                            className="h-4 w-4"
+                          />
+                        </span>
+                        <div className="min-w-0">
+                          <div className="truncate leading-snug">
+                            {item.name}
+                          </div>
+                          {item.isHub && (
+                            <div className="truncate text-[10px] font-semibold text-[#2b8fd0]">
+                              Bấm để bật luồng chấm sáng độ phủ cung ứng
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                      <span className="shrink-0 rounded-full bg-emerald-950/[0.05] px-2 py-0.5 text-[10px] font-bold text-emerald-950/65">
+                        {item.isHub
+                          ? 'Nhà máy TT'
+                          : item.category === 'pig'
+                          ? 'Trại heo'
+                          : item.category === 'chicken'
+                          ? 'Trại gà'
+                          : item.subType === 'office'
+                          ? 'Văn phòng'
+                          : item.subType === 'warehouse'
+                          ? 'Kho'
+                          : item.subType === 'wash'
+                          ? 'Rửa xe'
+                          : 'Khác'}
+                      </span>
+                    </button>
+                  </React.Fragment>
+                );
+              })
+            )}
+          </div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
 
   const handleSheetDragEnd = (
     _event: MouseEvent | TouchEvent | PointerEvent,
@@ -690,25 +893,45 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
 
           {/* Cụm Phải: Tìm kiếm nhỏ + Nút icon Tour + La bàn + Tùy chỉnh */}
           <div className="pointer-events-auto flex items-center gap-1.5">
-            <div className="relative flex items-center">
+            <div
+              ref={landscapeDropdownWrapperRef}
+              className="relative flex items-center"
+            >
               <Search className="pointer-events-none absolute left-2.5 h-3.5 w-3.5 text-[#2b8fd0]" />
               <input
                 type="text"
                 value={searchQuery}
-                onChange={(e) => onSearchChange(e.target.value)}
+                onFocus={() => setIsLocationDropdownOpen(true)}
+                onChange={(e) => {
+                  onSearchChange(e.target.value);
+                  setIsLocationDropdownOpen(true);
+                }}
                 onKeyDown={handleSearchKeyDown}
-                placeholder="Tìm trại..."
-                className="glass-panel h-9 w-28 rounded-full pr-6 pl-7 text-xs font-medium text-[#0f2a24] focus:w-40 focus:outline-none"
+                placeholder="Tất cả địa điểm..."
+                className="glass-panel h-9 w-36 rounded-full pr-11 pl-7 text-xs font-medium text-[#0f2a24] transition-all focus:w-48 focus:outline-none"
               />
               {searchQuery && (
                 <button
                   type="button"
                   onClick={() => onSearchChange('')}
-                  className="absolute right-2 text-emerald-950/50"
+                  className="absolute right-6 text-emerald-950/50 hover:text-[#d9261c]"
                 >
                   <X className="h-3 w-3" />
                 </button>
               )}
+              <button
+                type="button"
+                onClick={() => setIsLocationDropdownOpen((prev) => !prev)}
+                title="Mở danh sách tất cả địa điểm"
+                className="absolute right-1.5 flex h-6 w-6 items-center justify-center rounded-full text-[#2b8fd0] hover:bg-[#2b8fd0]/10 cursor-pointer"
+              >
+                {isLocationDropdownOpen ? (
+                  <ChevronUp className="h-3.5 w-3.5" />
+                ) : (
+                  <ChevronDown className="h-3.5 w-3.5" />
+                )}
+              </button>
+              {renderLocationDropdownList(false)}
             </div>
 
             <button
@@ -996,8 +1219,11 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
             })}
           </div>
 
-          {/* Thanh Dock chính: Nút Tìm kiếm (bung rộng khi bấm) + Nút TOUR TỰ ĐỘNG */}
-          <div className="pointer-events-auto flex items-center gap-2">
+          {/* Thanh Dock chính: Nút Tìm kiếm / Danh sách điểm (bung rộng khi bấm) + Nút TOUR TỰ ĐỘNG */}
+          <div
+            ref={mobileDropdownWrapperRef}
+            className="pointer-events-auto relative flex items-center gap-2"
+          >
             {isMobileSearchExpanded || searchQuery ? (
               <div className="glass-panel relative flex h-11 flex-1 items-center rounded-full bg-white/95 px-3.5 shadow-md">
                 <Search className="h-4 w-4 shrink-0 text-[#2b8fd0]" />
@@ -1005,22 +1231,40 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
                   ref={mobileSearchInputRef}
                   type="text"
                   value={searchQuery}
-                  onChange={(e) => onSearchChange(e.target.value)}
+                  onFocus={() => setIsLocationDropdownOpen(true)}
+                  onChange={(e) => {
+                    onSearchChange(e.target.value);
+                    setIsLocationDropdownOpen(true);
+                  }}
                   onKeyDown={handleSearchKeyDown}
-                  placeholder="Tìm tên trại (Enter bay tới)..."
+                  placeholder="Chọn hoặc tìm địa điểm..."
                   autoFocus
-                  className="h-full w-full bg-transparent px-2.5 text-xs font-semibold text-[#0f2a24] placeholder-emerald-950/45 focus:outline-none"
+                  className="h-full w-full bg-transparent px-2 text-xs font-semibold text-[#0f2a24] placeholder-emerald-950/45 focus:outline-none"
                 />
+                <button
+                  type="button"
+                  onClick={() => setIsLocationDropdownOpen((prev) => !prev)}
+                  title="Đóng/mở danh sách địa điểm"
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[#2b8fd0]"
+                >
+                  {isLocationDropdownOpen ? (
+                    <ChevronDown className="h-4 w-4" />
+                  ) : (
+                    <ChevronUp className="h-4 w-4" />
+                  )}
+                </button>
                 <button
                   type="button"
                   onClick={() => {
                     onSearchChange('');
+                    setIsLocationDropdownOpen(false);
                     setIsMobileSearchExpanded(false);
                   }}
                   className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-emerald-950/55"
                 >
                   <X className="h-4 w-4" />
                 </button>
+                {renderLocationDropdownList(true)}
               </div>
             ) : (
               <>
@@ -1028,9 +1272,10 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
                   type="button"
                   onClick={() => {
                     setIsMobileSearchExpanded(true);
+                    setIsLocationDropdownOpen(true);
                     setTimeout(() => mobileSearchInputRef.current?.focus(), 60);
                   }}
-                  aria-label="Tìm kiếm trang trại"
+                  aria-label="Tìm kiếm và chọn địa điểm"
                   className="glass-panel flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-[#2b8fd0] shadow-md"
                 >
                   <Search className="h-5 w-5" />
@@ -1336,7 +1581,7 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
           </motion.div>
         </div>
 
-        {/* HÀNG 2: Ô tìm kiếm + Chip lọc (Trại gà / Trại heo / Khác) */}
+        {/* HÀNG 2: Ô tìm kiếm (Searchable Dropdown) + Chip lọc (Trại gà / Trại heo / Khác) */}
         <motion.div
           initial={{ opacity: 0, y: -10 }}
           animate={{ opacity: 1, y: 0 }}
@@ -1346,28 +1591,49 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
             damping: 24,
             delay: 0.08,
           }}
-          className="pointer-events-auto flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar"
+          className="pointer-events-auto flex flex-wrap items-center gap-2 pb-1"
         >
-          {/* Ô tìm kiếm */}
-          <div className="relative flex shrink-0 items-center">
+          {/* Ô tìm kiếm kết hợp Danh sách xổ xuống tất cả các điểm (Searchable Dropdown) */}
+          <div
+            ref={desktopDropdownWrapperRef}
+            className="relative flex shrink-0 items-center"
+          >
             <Search className="pointer-events-none absolute left-3.5 h-4 w-4 text-[#2b8fd0]" />
             <input
               type="text"
               value={searchQuery}
-              onChange={(e) => onSearchChange(e.target.value)}
+              onFocus={() => setIsLocationDropdownOpen(true)}
+              onChange={(e) => {
+                onSearchChange(e.target.value);
+                setIsLocationDropdownOpen(true);
+              }}
               onKeyDown={handleSearchKeyDown}
-              placeholder="Tìm tên trại (Enter bay tới)..."
-              className="glass-panel h-10 w-52 rounded-full pr-8 pl-9 text-xs font-medium text-[#0f2a24] placeholder-emerald-950/45 transition-all focus:w-64 focus:border-[#2b8fd0] focus:bg-white/95 focus:outline-none lg:w-60 lg:focus:w-72"
+              placeholder="Tìm tên trại / Chọn địa điểm..."
+              className="glass-panel h-10 w-60 rounded-full pr-14 pl-9 text-xs font-semibold text-[#0f2a24] placeholder-emerald-950/50 transition-all focus:w-72 focus:border-[#2b8fd0] focus:bg-white/95 focus:outline-none lg:w-68 lg:focus:w-80"
             />
             {searchQuery && (
               <button
                 type="button"
                 onClick={() => onSearchChange('')}
-                className="absolute right-2.5 text-emerald-950/50 hover:text-[#d9261c] cursor-pointer"
+                title="Xóa từ khóa"
+                className="absolute right-8 text-emerald-950/50 hover:text-[#d9261c] cursor-pointer"
               >
-                <X className="h-4 w-4" />
+                <X className="h-3.5 w-3.5" />
               </button>
             )}
+            <button
+              type="button"
+              onClick={() => setIsLocationDropdownOpen((prev) => !prev)}
+              title="Xổ danh sách tất cả địa điểm theo thứ tự ưu tiên"
+              className="absolute right-1.5 flex h-7 w-7 items-center justify-center rounded-full text-[#2b8fd0] transition-colors hover:bg-[#2b8fd0]/12 cursor-pointer"
+            >
+              {isLocationDropdownOpen ? (
+                <ChevronUp className="h-4 w-4" />
+              ) : (
+                <ChevronDown className="h-4 w-4" />
+              )}
+            </button>
+            {renderLocationDropdownList(false)}
           </div>
 
           {/* Chip lọc theo loại trang trại */}

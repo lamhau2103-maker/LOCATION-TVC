@@ -758,14 +758,19 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
 
     /**
      * Xây dựng MỘT GeoJSON source duy nhất "farms" chứa tất cả trang trại + nhà máy trung tâm:
-     * - Toạ độ [exactLng, exactLat] giữ nguyên 100% độ chính xác số thực gốc (không làm tròn, không jitter)
+     * - Chuẩn tọa độ GeoJSON trên MapLibre GL: `geometry.coordinates` bắt buộc là `[Number(lng), Number(lat)]`
+     *   (kinh độ ~107.01 trước, vĩ độ ~10.96 sau). Tự kiểm tra nếu `Math.abs(coords[0]) < 30` thì đảo lại `[coords[1], coords[0]]`.
      * - Thuộc tính `lat` dùng cho `symbol-sort-key: ['-', 90, ['get', 'lat']]` để điểm phía nam (vĩ độ thấp hơn)
      *   luôn vẽ đè lên điểm phía bắc (vĩ độ cao hơn) giống Google My Maps.
      */
     const buildFarmsSourceGeoJSON = useCallback(
       (allFarms: Farm[], hub: CentralHub) => {
-        const hubLng = Number(hub.lng);
-        const hubLat = Number(hub.lat);
+        let hubCoords: [number, number] = [Number(hub.lng), Number(hub.lat)];
+        if (Math.abs(hubCoords[0]) < 30 && Math.abs(hubCoords[1]) >= 30) {
+          hubCoords = [hubCoords[1], hubCoords[0]];
+        }
+        const [hubLng, hubLat] = hubCoords;
+
         renderedCoordsMapRef.current.set('__CENTRAL_HUB__', {
           lat: hubLat,
           lng: hubLng,
@@ -781,6 +786,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
               isHub: true,
               isConnectable: true,
               iconImage: 'farm-icon-hub',
+              markerIcon: 'marker-factory',
               color: '#2b8fd0',
               lat: hubLat,
               lng: hubLng,
@@ -791,8 +797,12 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
             },
           },
           ...allFarms.map((f) => {
-            const exactLng = Number(f.lng);
-            const exactLat = Number(f.lat);
+            let coords: [number, number] = [Number(f.lng), Number(f.lat)];
+            if (Math.abs(coords[0]) < 30 && Math.abs(coords[1]) >= 30) {
+              coords = [coords[1], coords[0]];
+            }
+            const [exactLng, exactLat] = coords;
+
             renderedCoordsMapRef.current.set(f.id, {
               lat: exactLat,
               lng: exactLng,
@@ -801,6 +811,12 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
             const iconKey = f.subType
               ? `farm-icon-${f.subType}`
               : `farm-icon-${f.category}`;
+            const markerAlias =
+              f.category === 'chicken'
+                ? 'marker-chicken'
+                : f.category === 'pig'
+                ? 'marker-pig'
+                : 'marker-other';
             const catColor = getCategoryConfig(f.category).hex;
 
             return {
@@ -812,6 +828,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
                 isHub: false,
                 isConnectable: Boolean(f.isConnectable),
                 iconImage: iconKey,
+                markerIcon: markerAlias,
                 color: catColor,
                 lat: exactLat,
                 lng: exactLng,
@@ -833,7 +850,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
     );
 
     /**
-     * Cập nhật filter & opacity của các layer WebGL ("farm-icons", "farm-pulse", "farm-surface-dot", "farm-labels", "farm-selected", "hub-label")
+     * Cập nhật filter & opacity của các layer WebGL ("farm-icons", "farm-pulse", "farm-surface-dot", "farm-dots", "farm-labels", "farm-selected", "hub-label")
      * mà KHÔNG cần gọi source.setData khi chỉ đổi bộ lọc chip, tìm kiếm hoặc chọn điểm.
      */
     const applyLayerFiltersAndStyles = useCallback(
@@ -884,6 +901,9 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
           if (map.getLayer('farm-surface-dot')) {
             map.setFilter('farm-surface-dot', categoryFilter);
           }
+          if (map.getLayer('farm-dots')) {
+            map.setFilter('farm-dots', categoryFilter);
+          }
           if (map.getLayer('farm-pulse')) {
             map.setFilter('farm-pulse', categoryFilter);
             map.setLayoutProperty(
@@ -903,7 +923,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
           }
 
           // Biểu thức độ mờ (opacity):
-          // - Khi chọn Nhà máy Trung tâm: các điểm không nối (văn phòng, kho, rửa xe) mờ nhẹ xuống ~0.4
+          // - Khi chọn Nhà máy Trung tâm: các điểm không nối (văn phòng, kho, rửa xe) mờ xuống 0.35
           // - Khi đang tìm kiếm: các điểm không khớp mờ xuống 0.35
           // - Khi chạy Tour tự động: các điểm không phải điểm hiện tại mờ xuống 0.48
           const hasSearch = curQuery.length > 0;
@@ -917,7 +937,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
               1,
               ['boolean', ['get', 'isConnectable'], false],
               1,
-              0.4,
+              0.35,
             ];
           } else if (hasSearch) {
             featureAlphaExpr = [
@@ -949,6 +969,19 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
             );
             map.setPaintProperty(
               'farm-surface-dot',
+              'circle-stroke-opacity',
+              featureAlphaExpr
+            );
+          }
+
+          if (map.getLayer('farm-dots')) {
+            map.setPaintProperty(
+              'farm-dots',
+              'circle-opacity',
+              featureAlphaExpr
+            );
+            map.setPaintProperty(
+              'farm-dots',
               'circle-stroke-opacity',
               featureAlphaExpr
             );
@@ -1348,7 +1381,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
           });
         }
 
-        // 6b. Layer chấm tâm bề mặt "farm-surface-dot": nằm sát mặt đất tại đúng toạ độ (lat, lng)
+        // 6b. Layer chấm tâm bề mặt "farm-surface-dot" & "farm-dots": nằm sát mặt đất tại đúng toạ độ (lat, lng) để luôn thấy rõ mọi điểm
         if (!map.getLayer('farm-surface-dot')) {
           map.addLayer({
             id: 'farm-surface-dot',
@@ -1361,16 +1394,43 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
                 ['linear'],
                 ['zoom'],
                 1.5,
-                5.0,
+                5.2,
                 3.5,
-                5.5,
+                5.8,
                 6,
-                3.8,
-                15,
                 4.2,
+                15,
+                4.5,
               ],
               'circle-color': ['get', 'color'],
               'circle-stroke-width': 1.8,
+              'circle-stroke-color': '#ffffff',
+            },
+          });
+        }
+
+        if (!map.getLayer('farm-dots')) {
+          map.addLayer({
+            id: 'farm-dots',
+            type: 'circle',
+            source: 'farms',
+            paint: {
+              'circle-pitch-alignment': 'viewport',
+              'circle-radius': [
+                'interpolate',
+                ['linear'],
+                ['zoom'],
+                1.35,
+                4.5,
+                3.5,
+                5.2,
+                6,
+                3.8,
+                15,
+                4.0,
+              ],
+              'circle-color': ['get', 'color'],
+              'circle-stroke-width': 1.6,
               'circle-stroke-color': '#ffffff',
             },
           });
@@ -1709,6 +1769,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         const activeLayers = [
           'farm-selected',
           'farm-icons',
+          'farm-dots',
           'farm-surface-dot',
           'farms-3d-extrusion',
         ].filter((id) => Boolean(map.getLayer(id)));

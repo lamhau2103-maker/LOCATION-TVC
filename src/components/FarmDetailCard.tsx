@@ -882,10 +882,10 @@ export const HubDetailCard: React.FC<HubDetailCardProps> = ({
             </div>
           </div>
 
-          {/* Khối thống kê đường kết nối trực tiếp */}
+          {/* Khối thống kê độ phủ cung ứng trực tiếp */}
           <div className="mt-2.5 rounded-2xl border border-[#facc15]/60 bg-gradient-to-r from-amber-50/95 via-sky-50/90 to-rose-50/90 px-3.5 py-2.5 shadow-2xs">
             <div className="text-xs font-extrabold text-[#0f2a24] sm:text-sm">
-              Đang kết nối{' '}
+              Độ phủ cung ứng:{' '}
               <span className="text-[#ea580c]">
                 {connectedChickenCount} trại gà
               </span>

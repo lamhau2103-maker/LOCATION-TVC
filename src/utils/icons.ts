@@ -772,8 +772,17 @@ const VALID_SUBTYPES: ReadonlyArray<FarmSubType | 'hub'> = [
   'hub',
 ];
 
+const MARKER_ALIAS_MAP: Record<string, FarmSubType | 'hub'> = {
+  'marker-chicken': 'chicken',
+  'marker-pig': 'pig',
+  'marker-other': 'other',
+  'marker-factory': 'hub',
+};
+
 /**
  * Đăng ký ĐỒNG BỘ 100% một ảnh icon vào MapLibre GL (tức thì, không bất đồng bộ)
+ * Hỗ trợ cả tên 'marker-chicken' / 'marker-pig' / 'marker-other' / 'marker-factory'
+ * lẫn 'farm-icon-chicken' / 'farm-icon-pig' / 'farm-icon-other' / 'farm-icon-hub' / ...
  */
 export function addSingleFarmIconToMap(
   map: maplibregl.Map,
@@ -791,6 +800,13 @@ export function addSingleFarmIconToMap(
     if (imageId === 'supply-particle-pig') {
       const imgData = createGlowParticleImageDataSync('#fef08a', '#fb7185', 64);
       map.addImage(imageId, imgData, { pixelRatio: 2 });
+      return;
+    }
+
+    if (imageId in MARKER_ALIAS_MAP) {
+      const st = MARKER_ALIAS_MAP[imageId];
+      const { imageData } = createFarmPinCanvasSync(st, st === 'hub', 2);
+      map.addImage(imageId, imageData, { pixelRatio: 2 });
       return;
     }
 
@@ -815,8 +831,179 @@ export function registerMapLibreFarmIcons(map: maplibregl.Map): void {
   for (const st of VALID_SUBTYPES) {
     addSingleFarmIconToMap(map, `farm-icon-${st}`);
   }
+  for (const aliasId of Object.keys(MARKER_ALIAS_MAP)) {
+    addSingleFarmIconToMap(map, aliasId);
+  }
   addSingleFarmIconToMap(map, 'supply-particle-chicken');
   addSingleFarmIconToMap(map, 'supply-particle-pig');
+}
+
+export interface DropdownLocationItem {
+  id: string;
+  name: string;
+  type?: string;
+  category: FarmCategory | 'hub';
+  subType?: FarmSubType | 'hub';
+  lat: number;
+  lng: number;
+  isHub?: boolean;
+  farm?: any;
+}
+
+/**
+ * Xác định nhóm ưu tiên (1 -> 7) cho danh sách xổ xuống "Tất cả địa điểm":
+ * 1. Trụ sở chính Công ty Thái Việt Corporation (tên chứa "tru so" / "cong ty" / "thai viet corporation")
+ * 2. Văn phòng miền Nam (tên chứa "van phong mien nam" / "vp mien nam", sau đó đến các văn phòng khác)
+ * 3. Nhà máy trung tâm (Nhà máy trung tâm Thái Việt — luôn nằm ở nhóm đầu để dễ bấm kích hoạt luồng độ phủ)
+ * 4. Kho heo trung tâm (tên chứa "kho heo trung tam", sau đó đến các kho khác)
+ * 5. Các trại heo (toàn bộ trại thuộc nhóm heo)
+ * 6. Các trại gà (toàn bộ trại thuộc nhóm gà)
+ * 7. Các điểm còn lại & cuối cùng là các điểm rửa xe ("rua xe" / "diem rua" / "tram rua" / "sat khuan")
+ */
+function getDropdownPriorityRank(item: DropdownLocationItem): {
+  group: number;
+  subRank: number;
+  groupLabel: string;
+} {
+  const normName = normalizeMatchText(item.name || '');
+  const normAll = normalizeMatchText(`${item.type || ''} ${item.name || ''}`);
+  const paddedAll = ` ${normAll} `;
+
+  // 3. Nhà máy trung tâm Thái Việt (isHub === true)
+  if (item.isHub || item.category === 'hub') {
+    return {
+      group: 3,
+      subRank: 0,
+      groupLabel: 'Nhà máy trung tâm',
+    };
+  }
+
+  // Kiểm tra điểm rửa xe trước để không bị lọt nhầm vào nhóm trên
+  const isWashPoint =
+    item.subType === 'wash' ||
+    normAll.includes('rua xe') ||
+    normAll.includes('diem rua') ||
+    normAll.includes('tram rua') ||
+    normAll.includes('sat khuan') ||
+    normAll.includes('khu trung');
+
+  if (isWashPoint) {
+    return {
+      group: 7,
+      subRank: 2,
+      groupLabel: 'Trạm rửa xe & Sát khuẩn',
+    };
+  }
+
+  // 1. Trụ sở chính Công ty Thái Việt Corporation
+  if (
+    normAll.includes('tru so') ||
+    normName.includes('cong ty') ||
+    normName.includes('thai viet corporation')
+  ) {
+    return {
+      group: 1,
+      subRank: normAll.includes('tru so') ? 0 : 1,
+      groupLabel: 'Trụ sở chính & Văn phòng',
+    };
+  }
+
+  // 2. Văn phòng miền Nam -> các văn phòng khác
+  const isSouthOffice =
+    normAll.includes('van phong mien nam') ||
+    normAll.includes('vp mien nam');
+  const isOtherOffice =
+    item.subType === 'office' ||
+    normAll.includes('van phong') ||
+    paddedAll.includes(' vp ') ||
+    normName.startsWith('vp ') ||
+    normAll.includes('office') ||
+    normAll.includes('chi nhanh');
+
+  if (isSouthOffice || isOtherOffice) {
+    return {
+      group: 2,
+      subRank: isSouthOffice ? 0 : 1,
+      groupLabel: 'Trụ sở chính & Văn phòng',
+    };
+  }
+
+  // Nếu là điểm nhà máy khác trong dữ liệu KML
+  if (normAll.includes('nha may trung tam') || normName.includes('nha may')) {
+    return {
+      group: 3,
+      subRank: 1,
+      groupLabel: 'Nhà máy trung tâm',
+    };
+  }
+
+  // 4. Kho heo trung tâm -> các kho khác
+  const isCentralPigWarehouse = normAll.includes('kho heo trung tam');
+  const isOtherWarehouse =
+    item.subType === 'warehouse' ||
+    normAll.includes('kho ') ||
+    normName.startsWith('kho') ||
+    normAll.includes('warehouse');
+
+  if (isCentralPigWarehouse || isOtherWarehouse) {
+    return {
+      group: 4,
+      subRank: isCentralPigWarehouse ? 0 : 1,
+      groupLabel: 'Hệ thống Kho trung tâm',
+    };
+  }
+
+  // 5. Các trại heo
+  if (item.category === 'pig') {
+    return {
+      group: 5,
+      subRank: 0,
+      groupLabel: 'Hệ thống Trại heo',
+    };
+  }
+
+  // 6. Các trại gà
+  if (item.category === 'chicken') {
+    return {
+      group: 6,
+      subRank: 0,
+      groupLabel: 'Hệ thống Trại gà',
+    };
+  }
+
+  // 7. Các điểm còn lại (xếp trước các điểm rửa xe subRank = 2)
+  return {
+    group: 7,
+    subRank: 1,
+    groupLabel: 'Các điểm khác',
+  };
+}
+
+/**
+ * Sắp xếp danh sách tất cả địa điểm cho Searchable Dropdown theo đúng 7 thứ tự ưu tiên bắt buộc,
+ * trong cùng một nhóm và subRank thì xếp theo bảng chữ cái A-Z (tiếng Việt).
+ */
+export function sortLocationsForDropdown<T extends DropdownLocationItem>(
+  items: T[]
+): Array<T & { group: number; subRank: number; groupLabel: string }> {
+  return items
+    .map((item) => {
+      const rank = getDropdownPriorityRank(item);
+      return {
+        ...item,
+        group: rank.group,
+        subRank: rank.subRank,
+        groupLabel: rank.groupLabel,
+      };
+    })
+    .sort((a, b) => {
+      if (a.group !== b.group) return a.group - b.group;
+      if (a.subRank !== b.subRank) return a.subRank - b.subRank;
+      return a.name.localeCompare(b.name, 'vi', {
+        sensitivity: 'base',
+        numeric: true,
+      });
+    });
 }
 
 

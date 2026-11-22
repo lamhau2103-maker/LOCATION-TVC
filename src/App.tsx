@@ -1483,6 +1483,7 @@ export default function App() {
             searchQuery={searchQuery}
             onSearchChange={setSearchQuery}
             onSearchSubmit={handleSearchSubmit}
+            onSelectFarm={handleSelectFarm}
             activeCategories={activeCategories}
             onToggleCategory={handleToggleCategory}
             biosecurityRadius={biosecurityRadius}
