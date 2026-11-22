@@ -1241,13 +1241,25 @@ export default function App() {
     }
   };
 
-  // Cách (d): Bấm chip loại -> lọc điểm ngay trên địa cầu (chưa chuyển cảnh)
+  // Cách (d): Bấm chip loại -> bật/tắt nhóm đó ngay lập tức trên cả địa cầu lẫn bản đồ chi tiết
   const handleToggleCategory = (cat: FarmCategory) => {
     setActiveCategories((prev) => {
-      const next = { ...prev, [cat]: !prev[cat] };
-      if (!next.chicken && !next.pig && !next.other) {
-        return { chicken: true, pig: true, other: true };
+      const nextState = !prev[cat];
+      const next = { ...prev, [cat]: nextState };
+
+      // Nếu người dùng tắt một nhóm mà trại đang chọn hoặc đường nối đơn lẻ thuộc nhóm đó, ẩn luôn đường nối tới nhóm bị tắt
+      if (!nextState) {
+        if (selectedFarm && selectedFarm.category === cat) {
+          setSelectedFarmId(null);
+        }
+        if (singleArcFarmId) {
+          const arcFarm = farms.find((f) => f.id === singleArcFarmId);
+          if (arcFarm && arcFarm.category === cat) {
+            setSingleArcFarmId(null);
+          }
+        }
       }
+
       return next;
     });
   };

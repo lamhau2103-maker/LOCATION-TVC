@@ -366,14 +366,304 @@ export function getFarmIconSvg(
 }
 
 /**
- * Tạo chuỗi SVG Huy hiệu Ghim 3D chuẩn xác trên khung 64x64 (vẽ ra canvas 128x128 với pixelRatio: 2):
- * Đỉnh dưới cùng của mũi ghim nằm ĐÚNG tại (32, 64) - sát mép dưới cùng chính giữa của viewBox (0 0 64 64)
+ * VẼ TRỰC TIẾP ICON LÊN HTML5 CANVAS 2D (ĐỒNG BỘ 100%, KHÔNG PHỤ THUỘC Image.onload BẤT ĐỒNG BỘ)
+ * Khung logic 64x64 -> vẽ ở độ phân giải vật lý 128x128 (pixelRatio: 2, hệ số scale = 2).
+ * Đỉnh dưới cùng của mũi ghim nằm ĐÚNG tại (32, 64) - sát mép dưới cùng chính giữa của khung 64x64
  * để khi MapLibre neo `icon-anchor: 'bottom'` và `icon-offset: [0, 0]`, mũi ghim trùng khít 100% với toạ độ (lat, lng).
  */
-function getMapLibrePinSvg(
+function drawInnerPictogram2D(
+  ctx: CanvasRenderingContext2D,
+  subType: FarmSubType | 'hub'
+): void {
+  ctx.save();
+  // Tâm huy hiệu nằm tại (32, 24) trong hệ toạ độ 64x64
+  if (subType === 'chicken') {
+    // Mào đỏ phía trên đầu gà
+    ctx.fillStyle = '#ef4444';
+    ctx.strokeStyle = '#b91c1c';
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.arc(28.5, 13.8, 2.3, 0, Math.PI * 2);
+    ctx.arc(31.8, 12.6, 2.7, 0, Math.PI * 2);
+    ctx.arc(35.0, 14.0, 2.2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    // Thân/đầu gà tròn cam #fb923c
+    ctx.fillStyle = '#fb923c';
+    ctx.strokeStyle = '#9a3412';
+    ctx.lineWidth = 1.8;
+    ctx.beginPath();
+    ctx.arc(31.2, 24.5, 8.6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    // Cánh nhỏ cam sáng
+    ctx.fillStyle = '#fdba74';
+    ctx.strokeStyle = '#9a3412';
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.ellipse(27.8, 25.4, 3.2, 2.2, -0.25, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    // Mỏ vàng nhọn bên phải
+    ctx.fillStyle = '#facc15';
+    ctx.strokeStyle = '#9a3412';
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.moveTo(39.0, 22.4);
+    ctx.lineTo(44.2, 24.3);
+    ctx.lineTo(39.0, 26.2);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    // Yếm đỏ dưới mỏ
+    ctx.fillStyle = '#ef4444';
+    ctx.beginPath();
+    ctx.arc(38.6, 27.6, 1.7, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Má hồng nhẹ
+    ctx.fillStyle = 'rgba(239, 68, 68, 0.42)';
+    ctx.beginPath();
+    ctx.arc(28.4, 26.0, 1.7, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Mắt đen + chấm sáng trắng
+    ctx.fillStyle = '#1e293b';
+    ctx.beginPath();
+    ctx.arc(34.2, 22.0, 1.75, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(34.7, 21.4, 0.6, 0, Math.PI * 2);
+    ctx.fill();
+  } else if (subType === 'pig') {
+    // Hai tai heo cụp hai bên
+    ctx.fillStyle = '#f43f5e';
+    ctx.strokeStyle = '#881337';
+    ctx.lineWidth = 1.6;
+
+    // Tai trái
+    ctx.beginPath();
+    ctx.moveTo(23.5, 19.5);
+    ctx.lineTo(21.2, 13.0);
+    ctx.lineTo(28.2, 15.4);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    // Tai phải
+    ctx.beginPath();
+    ctx.moveTo(40.5, 19.5);
+    ctx.lineTo(42.8, 13.0);
+    ctx.lineTo(35.8, 15.4);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    // Mặt heo tròn hồng san hô #fb7185
+    ctx.fillStyle = '#fb7185';
+    ctx.strokeStyle = '#881337';
+    ctx.lineWidth = 1.8;
+    ctx.beginPath();
+    ctx.arc(32, 24.5, 9.2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    // Hai mắt đen + chấm sáng trắng
+    ctx.fillStyle = '#1e293b';
+    ctx.beginPath();
+    ctx.arc(28.0, 21.6, 1.65, 0, Math.PI * 2);
+    ctx.arc(36.0, 21.6, 1.65, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(28.4, 21.1, 0.55, 0, Math.PI * 2);
+    ctx.arc(36.4, 21.1, 0.55, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Mũi heo bầu dục hồng phấn rõ nét
+    ctx.fillStyle = '#ffe4e6';
+    ctx.strokeStyle = '#881337';
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.roundRect(26.6, 24.2, 10.8, 6.4, 3.2);
+    ctx.fill();
+    ctx.stroke();
+
+    // Hai lỗ mũi
+    ctx.fillStyle = '#be123c';
+    ctx.beginPath();
+    ctx.ellipse(30.0, 27.4, 1.15, 1.55, 0, 0, Math.PI * 2);
+    ctx.ellipse(34.0, 27.4, 1.15, 1.55, 0, 0, Math.PI * 2);
+    ctx.fill();
+  } else if (subType === 'hub') {
+    // Hoa sen Nhà máy Trung tâm Thái Việt xanh dương #2b8fd0
+    ctx.strokeStyle = '#1e3a8a';
+    ctx.lineWidth = 1.4;
+    ctx.lineJoin = 'round';
+
+    // Cánh sen trái
+    ctx.fillStyle = '#38bdf8';
+    ctx.beginPath();
+    ctx.moveTo(31.2, 26.5);
+    ctx.quadraticCurveTo(23.5, 24.2, 24.5, 16.5);
+    ctx.quadraticCurveTo(29.0, 19.2, 31.2, 26.5);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    // Cánh sen phải
+    ctx.beginPath();
+    ctx.moveTo(32.8, 26.5);
+    ctx.quadraticCurveTo(40.5, 24.2, 39.5, 16.5);
+    ctx.quadraticCurveTo(35.0, 19.2, 32.8, 26.5);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    // Cánh sen chính giữa
+    ctx.fillStyle = '#2b8fd0';
+    ctx.beginPath();
+    ctx.moveTo(32, 12.8);
+    ctx.quadraticCurveTo(27.5, 19.5, 32, 26.8);
+    ctx.quadraticCurveTo(36.5, 19.5, 32, 12.8);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    // Đế đài sen
+    ctx.fillStyle = '#2b8fd0';
+    ctx.beginPath();
+    ctx.moveTo(22.5, 27.0);
+    ctx.quadraticCurveTo(27.5, 26.2, 32, 28.8);
+    ctx.quadraticCurveTo(36.5, 26.2, 41.5, 27.0);
+    ctx.quadraticCurveTo(38.5, 32.5, 32, 32.5);
+    ctx.quadraticCurveTo(25.5, 32.5, 22.5, 27.0);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+  } else if (subType === 'office') {
+    // Toà nhà văn phòng xanh ngọc #14b8a6
+    ctx.fillStyle = '#14b8a6';
+    ctx.strokeStyle = '#115e59';
+    ctx.lineWidth = 1.7;
+    ctx.beginPath();
+    ctx.roundRect(24.2, 14.0, 15.6, 18.8, 2);
+    ctx.fill();
+    ctx.stroke();
+
+    // Ô cửa sổ trắng
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(27.0, 17.2, 3.0, 2.6);
+    ctx.fillRect(34.0, 17.2, 3.0, 2.6);
+    ctx.fillRect(27.0, 21.8, 3.0, 2.6);
+    ctx.fillRect(34.0, 21.8, 3.0, 2.6);
+
+    // Cửa chính
+    ctx.fillStyle = '#ccfbf1';
+    ctx.fillRect(29.8, 26.8, 4.4, 5.8);
+  } else if (subType === 'warehouse') {
+    // Nhà kho mái tam giác xanh ngọc #14b8a6
+    ctx.fillStyle = '#14b8a6';
+    ctx.strokeStyle = '#115e59';
+    ctx.lineWidth = 1.7;
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    ctx.moveTo(22.2, 21.0);
+    ctx.lineTo(32.0, 14.5);
+    ctx.lineTo(41.8, 21.0);
+    ctx.lineTo(41.8, 32.2);
+    ctx.lineTo(22.2, 32.2);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    // Cửa cuốn kho
+    ctx.fillStyle = '#ccfbf1';
+    ctx.strokeStyle = '#115e59';
+    ctx.lineWidth = 1.3;
+    ctx.fillRect(26.2, 23.2, 11.6, 8.8);
+    ctx.strokeRect(26.2, 23.2, 11.6, 8.8);
+
+    ctx.beginPath();
+    ctx.moveTo(26.2, 26.2);
+    ctx.lineTo(37.8, 26.2);
+    ctx.moveTo(26.2, 29.2);
+    ctx.lineTo(37.8, 29.2);
+    ctx.stroke();
+  } else if (subType === 'wash') {
+    // Giọt nước trạm rửa xe / sát khuẩn
+    ctx.fillStyle = '#0ea5e9';
+    ctx.strokeStyle = '#0369a1';
+    ctx.lineWidth = 1.7;
+    ctx.beginPath();
+    ctx.moveTo(32, 13.8);
+    ctx.bezierCurveTo(36.5, 19.2, 37.5, 22.5, 37.5, 25.0);
+    ctx.arc(32, 25.0, 5.5, 0, Math.PI, false);
+    ctx.bezierCurveTo(26.5, 22.5, 27.5, 19.2, 32, 13.8);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = 'rgba(255,255,255,0.85)';
+    ctx.beginPath();
+    ctx.arc(30.2, 25.2, 1.3, 0, Math.PI * 2);
+    ctx.fill();
+  } else {
+    // Ngôi nhà trang trại xanh ngọc #14b8a6
+    ctx.fillStyle = '#14b8a6';
+    ctx.strokeStyle = '#115e59';
+    ctx.lineWidth = 1.7;
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    ctx.moveTo(21.8, 22.4);
+    ctx.lineTo(32.0, 14.2);
+    ctx.lineTo(42.2, 22.4);
+    ctx.lineTo(39.4, 22.4);
+    ctx.lineTo(39.4, 32.0);
+    ctx.lineTo(24.6, 32.0);
+    ctx.lineTo(24.6, 22.4);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = '#ccfbf1';
+    ctx.fillRect(28.4, 23.4, 7.2, 8.4);
+    ctx.strokeRect(28.4, 23.4, 7.2, 8.4);
+  }
+  ctx.restore();
+}
+
+/**
+ * Tạo trực tiếp HTMLCanvasElement (và trích xuất ImageData đồng bộ 100%)
+ * cho icon ghim trang trại / nhà máy bằng các lệnh vẽ Canvas 2D thuần tuý.
+ * Không dùng Image.onload nên có dữ liệu tức thì 100%, không bao giờ bị rỗng/trong suốt.
+ */
+export function createFarmPinCanvasSync(
   subType: FarmSubType | 'hub',
-  isSelected = false
-): string {
+  isSelected = false,
+  pixelScale = 2
+): { canvas: HTMLCanvasElement; imageData: ImageData } {
+  const logicalSize = 64;
+  const physicalSize = logicalSize * pixelScale;
+  const canvas = document.createElement('canvas');
+  canvas.width = physicalSize;
+  canvas.height = physicalSize;
+
+  const ctx = canvas.getContext('2d');
+  if (!ctx) {
+    throw new Error('Không tạo được 2D context cho icon');
+  }
+
+  ctx.clearRect(0, 0, physicalSize, physicalSize);
+  ctx.save();
+  ctx.scale(pixelScale, pixelScale);
+
   const borderColor =
     subType === 'chicken'
       ? '#fb923c'
@@ -383,64 +673,93 @@ function getMapLibrePinSvg(
       ? '#2b8fd0'
       : '#14b8a6';
 
-  const outerRing = isSelected
-    ? `<circle cx="32" cy="24" r="22.5" fill="none" stroke="#facc15" stroke-width="3" stroke-opacity="0.98"/>`
-    : '';
+  // Vòng hào quang vàng cho Nhà máy trung tâm hoặc điểm đang chọn
+  if (isSelected || subType === 'hub') {
+    ctx.save();
+    ctx.strokeStyle = subType === 'hub' ? '#38bdf8' : '#facc15';
+    ctx.lineWidth = 2.6;
+    ctx.beginPath();
+    ctx.arc(32, 24, 22.4, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
 
-  const innerSvg = getFarmIconSvg(subType, 28)
-    .replace(/<svg[^>]*>/, '<g transform="translate(18, 10) scale(0.7778)">')
-    .replace(/<\/svg>/, '</g>');
+  // 1. Mũi ghim tam giác chạm đúng điểm đáy chính giữa (32, 63.6)
+  ctx.save();
+  ctx.fillStyle = borderColor;
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = 1.8;
+  ctx.lineJoin = 'round';
+  ctx.beginPath();
+  ctx.moveTo(23.8, 40.5);
+  ctx.lineTo(32.0, 63.6);
+  ctx.lineTo(40.2, 40.5);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
 
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="128" height="128" fill="none">
-    ${outerRing}
-    <!-- Mũi ghim tam giác chạm đúng điểm đáy chính giữa (32, 63.8) -->
-    <path d="M24 41L32 63.8L40 41Z" fill="${borderColor}" stroke="#ffffff" stroke-width="1.8" stroke-linejoin="round"/>
-    <!-- Vòng tròn trắng viền màu nổi bật -->
-    <circle cx="32" cy="24" r="20" fill="#ffffff" stroke="${borderColor}" stroke-width="4.5"/>
-    ${innerSvg}
-    <!-- Chấm tâm nhỏ ngay đúng đỉnh mũi ghim (32, 63.2) -->
-    <circle cx="32" cy="63.2" r="1.8" fill="#ffffff" stroke="${borderColor}" stroke-width="1.3"/>
-  </svg>`;
+  // 2. Vòng tròn nền trắng viền màu nổi bật
+  ctx.save();
+  ctx.fillStyle = '#ffffff';
+  ctx.strokeStyle = borderColor;
+  ctx.lineWidth = 4.4;
+  ctx.beginPath();
+  ctx.arc(32, 24, 19.6, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+
+  // 3. Biểu tượng bên trong (Gà / Heo / Nhà máy / Văn phòng / Kho / Rửa xe / Khác)
+  drawInnerPictogram2D(ctx, subType);
+
+  // 4. Chấm tâm nhỏ ngay đúng đỉnh mũi ghim (32, 62.8)
+  ctx.save();
+  ctx.fillStyle = '#ffffff';
+  ctx.strokeStyle = borderColor;
+  ctx.lineWidth = 1.3;
+  ctx.beginPath();
+  ctx.arc(32, 62.8, 1.8, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+
+  ctx.restore();
+
+  const imageData = ctx.getImageData(0, 0, physicalSize, physicalSize);
+  return { canvas, imageData };
 }
 
 /**
- * Chuyển chuỗi SVG thành đối tượng ImageData để gọi `map.addImage(id, imageData, { pixelRatio: 2 })`
- * Khung logic 64x64 -> canvas vật lý 128x128 ở pixelRatio: 2
+ * Tạo texture chấm tròn phát sáng (glowing particle) đồng bộ bằng Canvas 2D
+ * dùng cho luồng chấm sáng cung ứng chạy một chiều từ Nhà máy -> Trại Gà / Trại Heo
  */
-export function renderSvgToImageData(
-  svgString: string,
-  width = 128,
-  height = 128
-): Promise<ImageData> {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    const svgBlob = new Blob([svgString], {
-      type: 'image/svg+xml;charset=utf-8',
-    });
-    const url = URL.createObjectURL(svgBlob);
+export function createGlowParticleImageDataSync(
+  coreColor = '#fef08a',
+  glowColor = '#facc15',
+  size = 64
+): ImageData {
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) {
+    throw new Error('Không tạo được 2D context cho particle');
+  }
 
-    img.onload = () => {
-      const canvas = document.createElement('canvas');
-      canvas.width = width;
-      canvas.height = height;
-      const ctx = canvas.getContext('2d');
-      URL.revokeObjectURL(url);
-      if (!ctx) {
-        reject(new Error('Không tạo được 2D context cho icon'));
-        return;
-      }
-      ctx.clearRect(0, 0, width, height);
-      ctx.drawImage(img, 0, 0, width, height);
-      resolve(ctx.getImageData(0, 0, width, height));
-    };
+  const r = size / 2;
+  const grad = ctx.createRadialGradient(r, r, r * 0.08, r, r, r);
+  grad.addColorStop(0, '#ffffff');
+  grad.addColorStop(0.28, coreColor);
+  grad.addColorStop(0.62, glowColor);
+  grad.addColorStop(1, 'rgba(250, 204, 21, 0)');
 
-    img.onerror = (err) => {
-      URL.revokeObjectURL(url);
-      reject(err);
-    };
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.arc(r, r, r, 0, Math.PI * 2);
+  ctx.fill();
 
-    img.src = url;
-  });
+  return ctx.getImageData(0, 0, size, size);
 }
 
 const VALID_SUBTYPES: ReadonlyArray<FarmSubType | 'hub'> = [
@@ -453,38 +772,51 @@ const VALID_SUBTYPES: ReadonlyArray<FarmSubType | 'hub'> = [
   'hub',
 ];
 
-export async function addSingleFarmIconToMap(
+/**
+ * Đăng ký ĐỒNG BỘ 100% một ảnh icon vào MapLibre GL (tức thì, không bất đồng bộ)
+ */
+export function addSingleFarmIconToMap(
   map: maplibregl.Map,
   imageId: string
-): Promise<void> {
-  if (!imageId.startsWith('farm-icon-') || map.hasImage(imageId)) return;
-  const rawType = imageId.replace('farm-icon-', '') as FarmSubType | 'hub';
-  const st: FarmSubType | 'hub' = VALID_SUBTYPES.includes(rawType)
-    ? rawType
-    : 'other';
-
+): void {
   try {
-    const svg = getMapLibrePinSvg(st, st === 'hub');
-    const imageData = await renderSvgToImageData(svg, 128, 128);
-    if (!map.hasImage(imageId)) {
-      map.addImage(imageId, imageData, { pixelRatio: 2 });
+    if (map.hasImage(imageId)) return;
+
+    if (imageId === 'supply-particle-chicken') {
+      const imgData = createGlowParticleImageDataSync('#fef08a', '#fb923c', 64);
+      map.addImage(imageId, imgData, { pixelRatio: 2 });
+      return;
     }
+
+    if (imageId === 'supply-particle-pig') {
+      const imgData = createGlowParticleImageDataSync('#fef08a', '#fb7185', 64);
+      map.addImage(imageId, imgData, { pixelRatio: 2 });
+      return;
+    }
+
+    if (!imageId.startsWith('farm-icon-')) return;
+    const rawType = imageId.replace('farm-icon-', '') as FarmSubType | 'hub';
+    const st: FarmSubType | 'hub' = VALID_SUBTYPES.includes(rawType)
+      ? rawType
+      : 'other';
+
+    const { imageData } = createFarmPinCanvasSync(st, st === 'hub', 2);
+    map.addImage(imageId, imageData, { pixelRatio: 2 });
   } catch {
-    // Bỏ qua an toàn nếu bản đồ đã huỷ giữa chừng
+    // Bỏ qua an toàn nếu bản đồ đang chuyển style
   }
 }
 
 /**
- * Đăng ký đầy đủ bộ ảnh icon vào MapLibre GL bằng `map.addImage` (64x64 logic, pixelRatio: 2):
- * - 'farm-icon-chicken', 'farm-icon-pig', 'farm-icon-other',
- * - 'farm-icon-office', 'farm-icon-warehouse', 'farm-icon-wash',
- * - 'farm-icon-hub' (Nhà máy trung tâm)
+ * Đăng ký ĐỒNG BỘ toàn bộ bộ ảnh icon + hạt phát sáng vào MapLibre GL ngay lập tức
+ * khi `map.on('load')` và `map.on('style.load')`.
  */
-export async function registerMapLibreFarmIcons(
-  map: maplibregl.Map
-): Promise<void> {
-  await Promise.all(
-    VALID_SUBTYPES.map((st) => addSingleFarmIconToMap(map, `farm-icon-${st}`))
-  );
+export function registerMapLibreFarmIcons(map: maplibregl.Map): void {
+  for (const st of VALID_SUBTYPES) {
+    addSingleFarmIconToMap(map, `farm-icon-${st}`);
+  }
+  addSingleFarmIconToMap(map, 'supply-particle-chicken');
+  addSingleFarmIconToMap(map, 'supply-particle-pig');
 }
+
 

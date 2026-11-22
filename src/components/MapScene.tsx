@@ -86,8 +86,7 @@ function getTerrainExaggeration(zoom: number, isLite: boolean): number {
 function getOptimalPixelRatio(isLite: boolean): number {
   if (isLite || typeof window === 'undefined') return 1;
   const dpr = window.devicePixelRatio || 1;
-  const isTouchOrTablet = window.innerWidth < 1024;
-  return isTouchOrTablet ? Math.min(dpr, 1.65) : Math.min(dpr, 2);
+  return Math.min(dpr, 1.75);
 }
 
 /**
@@ -165,7 +164,7 @@ function createSatelliteBaseStyle(
   return {
     version: 8,
     name: 'ThaiViet Satellite 3D',
-    glyphs: 'https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf',
+    glyphs: 'https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf',
     sources: {
       'esri-world-imagery': {
         type: 'raster',
@@ -190,6 +189,7 @@ function createSatelliteBaseStyle(
         source: 'esri-world-imagery',
         paint: {
           'raster-opacity': 0.96,
+          'raster-fade-duration': 0,
           'raster-saturation': 0.08,
           'raster-contrast': 0.06,
         },
@@ -435,27 +435,87 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
       []
     );
 
+    /**
+     * Pre-warm (tải trước) các tile ảnh vệ tinh Esri quanh một tọa độ (lng, lat) ở các mức zoom 6, 10, 13, 15
+     * để khi camera bay từ Địa cầu hoặc chuyển điểm, ảnh vệ tinh đã nằm sẵn trong bộ nhớ đệm của trình duyệt.
+     */
+    const prewarmSatelliteTilesAround = useCallback(
+      (lng: number, lat: number, targetZoom = 15) => {
+        if (typeof window === 'undefined') return;
+        const clampedLat = Math.max(-85, Math.min(85, lat));
+        const latRad = (clampedLat * Math.PI) / 180;
+        const maxZ = Math.min(Math.floor(targetZoom), esriMaxZoomRef.current);
+        const zoomLevels = Array.from(new Set([5, 8, 11, 13, maxZ])).filter(
+          (z) => z <= esriMaxZoomRef.current
+        );
+
+        for (const z of zoomLevels) {
+          const n = Math.pow(2, z);
+          const centerX = Math.floor(((lng + 180) / 360) * n);
+          const centerY = Math.floor(
+            ((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) /
+              2) *
+              n
+          );
+
+          const radius = z >= 13 ? 1 : 0;
+          for (let dx = -radius; dx <= radius; dx++) {
+            for (let dy = -radius; dy <= radius; dy++) {
+              const tx = (centerX + dx + n) % n;
+              const ty = Math.max(0, Math.min(n - 1, centerY + dy));
+              const url = ESRI_SATELLITE_TILES.replace('{z}', String(z))
+                .replace('{y}', String(ty))
+                .replace('{x}', String(tx));
+              const img = new Image();
+              img.crossOrigin = 'anonymous';
+              img.src = url;
+            }
+          }
+        }
+      },
+      []
+    );
+
     useImperativeHandle(ref, () => ({
       flyToFarm: (farm: Farm, zoom = 15.8) => {
         const map = mapRef.current;
         if (!map) return;
         isGlobeDraggingRef.current = true;
+        const targetLng = Number(farm.lng);
+        const targetLat = Number(farm.lat);
         const clampedZoom = Math.min(zoom, 16.5);
+
+        // Kích hoạt tải trước các tile ảnh vệ tinh quanh trang trại đích
+        prewarmSatelliteTilesAround(targetLng, targetLat, clampedZoom);
+
         const padding = computeCameraPadding(
           true,
           latestStateRef.current.mobileSheetSnap
         );
+
+        // Nếu đang ở Địa cầu (zoom rất nhỏ < 4.5), đặt sẵn tâm camera ở mức zoom trung bình tại Việt Nam
+        // trước khi lướt sát vào trang trại để tile vệ tinh hiện lên tức thì, không bị màn hình xám/trống
+        if (map.getZoom() < 4.5) {
+          map.jumpTo({
+            center: [targetLng, targetLat],
+            zoom: 7.2,
+            pitch: 35,
+            bearing: 0,
+          });
+        }
+
         map.flyTo({
-          center: [Number(farm.lng), Number(farm.lat)],
+          center: [targetLng, targetLat],
           zoom: clampedZoom,
           pitch: 60,
-          bearing: -22 + ((farm.lat * 100) % 44),
+          bearing: -22 + ((targetLat * 100) % 44),
           padding,
-          duration: 2800,
+          speed: 1.6,
+          curve: 1.2,
           essential: true,
         });
       },
-      flyToOverview: (duration = 4800, pitch = 65) => {
+      flyToOverview: (duration = 3200, pitch = 65) => {
         const map = mapRef.current;
         if (!map) return;
         isGlobeDraggingRef.current = true;
@@ -464,6 +524,8 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
           centralHub
         );
         const clampedZoom = Math.min(zoom, 16.5);
+        prewarmSatelliteTilesAround(center[0], center[1], clampedZoom);
+
         const isFromGlobeLowZoom =
           map.getZoom() < 5.5 && clampedZoom < 13.5 && pitch >= 65;
         const targetPitch = isFromGlobeLowZoom ? 65 : Math.min(pitch, 60);
@@ -474,6 +536,8 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
           bearing: 22,
           padding: { top: 0, right: 0, bottom: 0, left: 0 },
           duration,
+          speed: 1.6,
+          curve: 1.2,
           essential: true,
         });
       },
@@ -481,17 +545,22 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         const map = mapRef.current;
         if (!map) return;
         isGlobeDraggingRef.current = true;
+        const hubLng = Number(centralHub.lng);
+        const hubLat = Number(centralHub.lat);
+        prewarmSatelliteTilesAround(hubLng, hubLat, 14);
+
         const padding = computeCameraPadding(
           true,
           latestStateRef.current.mobileSheetSnap
         );
         map.flyTo({
-          center: [Number(centralHub.lng), Number(centralHub.lat)],
+          center: [hubLng, hubLat],
           zoom: Math.min(13.8, 16.5),
           pitch: 60,
           bearing: 12,
           padding,
-          duration: 2600,
+          speed: 1.6,
+          curve: 1.2,
           essential: true,
         });
       },
@@ -499,13 +568,19 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         const map = mapRef.current;
         if (!map) return;
         isGlobeDraggingRef.current = true;
-        const connectableList = visibleFarms.filter((f) => f.isConnectable);
+        const connectableList = visibleFarms.filter(
+          (f) =>
+            f.isConnectable &&
+            (f.category === 'chicken' || f.category === 'pig')
+        );
         const listForBounds =
           connectableList.length > 0 ? connectableList : visibleFarms;
         const { center, zoom } = getSystemCenterAndZoom(
           listForBounds,
           centralHub
         );
+        prewarmSatelliteTilesAround(center[0], center[1], 10);
+
         const padding = computeCameraPadding(
           true,
           latestStateRef.current.mobileSheetSnap
@@ -518,7 +593,8 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
           pitch: targetPitch,
           bearing: 14,
           padding,
-          duration: 2600,
+          speed: 1.6,
+          curve: 1.2,
           essential: true,
         });
       },
@@ -531,16 +607,18 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         }
         map.flyTo({
           center: [Number(centralHub.lng), Number(centralHub.lat)],
-          zoom: 2.35,
+          zoom: 2.55,
           pitch: 15,
           bearing: 0,
           padding: { top: 0, right: 0, bottom: 0, left: 0 },
-          duration: 3000,
+          duration: 2400,
+          speed: 1.6,
+          curve: 1.2,
           essential: true,
         });
         resumeRotateTimerRef.current = setTimeout(() => {
           isGlobeDraggingRef.current = false;
-        }, 3200);
+        }, 2600);
       },
       clearCameraPadding: () => {
         const map = mapRef.current;
@@ -825,7 +903,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
           }
 
           // Biểu thức độ mờ (opacity):
-          // - Khi chọn Nhà máy Trung tâm: các điểm không nối (văn phòng, kho, rửa xe) mờ nhẹ xuống 0.45
+          // - Khi chọn Nhà máy Trung tâm: các điểm không nối (văn phòng, kho, rửa xe) mờ nhẹ xuống ~0.4
           // - Khi đang tìm kiếm: các điểm không khớp mờ xuống 0.35
           // - Khi chạy Tour tự động: các điểm không phải điểm hiện tại mờ xuống 0.48
           const hasSearch = curQuery.length > 0;
@@ -839,7 +917,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
               1,
               ['boolean', ['get', 'isConnectable'], false],
               1,
-              0.45,
+              0.4,
             ];
           } else if (hasSearch) {
             featureAlphaExpr = [
@@ -860,17 +938,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
           }
 
           if (map.getLayer('farm-icons')) {
-            map.setPaintProperty('farm-icons', 'icon-opacity', [
-              'interpolate',
-              ['linear'],
-              ['zoom'],
-              1.65,
-              0,
-              2.25,
-              featureAlphaExpr,
-              18,
-              featureAlphaExpr,
-            ]);
+            map.setPaintProperty('farm-icons', 'icon-opacity', featureAlphaExpr);
           }
 
           if (map.getLayer('farm-surface-dot')) {
@@ -886,7 +954,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
             );
           }
 
-          // Nhãn "NHÀ MÁY TRUNG TÂM THÁI VIỆT": chỉ hiện khi rê chuột vào nhà máy, khi đang chọn nhà máy hoặc khi camera ở gần (zoom >= 9.5)
+          // Nhãn "NHÀ MÁY TRUNG TÂM THÁI VIỆT": hiện khi rê chuột vào nhà máy, khi đang chọn nhà máy hoặc khi camera ở gần (zoom >= 9.0)
           if (map.getLayer('hub-label')) {
             const forceShowHubLabel =
               curHubSelected || curHoveredId === '__CENTRAL_HUB__';
@@ -899,9 +967,9 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
                     'interpolate',
                     ['linear'],
                     ['zoom'],
-                    9.0,
+                    8.5,
                     0,
-                    9.8,
+                    9.5,
                     1,
                   ]
             );
@@ -1099,8 +1167,139 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
           });
         }
 
-        // 5. Đăng ký toàn bộ ảnh icon 3D (canvas 64x64, pixelRatio: 2)
-        void registerMapLibreFarmIcons(map);
+        // 5. Đăng ký ĐỒNG BỘ 100% toàn bộ ảnh icon 3D (Canvas 2D 64x64, pixelRatio: 2)
+        registerMapLibreFarmIcons(map);
+
+        // 5b. Nguồn GeoJSON đường cong Bezier & hạt chấm sáng cung ứng chạy một chiều từ Nhà máy -> Trại Gà / Trại Heo
+        const emptyCollection = {
+          type: 'FeatureCollection' as const,
+          features: [],
+        };
+        if (!map.getSource('supply-bezier-arcs')) {
+          map.addSource('supply-bezier-arcs', {
+            type: 'geojson',
+            data: emptyCollection,
+          });
+        }
+        if (!map.getSource('supply-particles')) {
+          map.addSource('supply-particles', {
+            type: 'geojson',
+            data: emptyCollection,
+          });
+        }
+        if (!map.getSource('supply-impact-rings')) {
+          map.addSource('supply-impact-rings', {
+            type: 'geojson',
+            data: emptyCollection,
+          });
+        }
+
+        // Layer đường dẫn nền Bezier bán trong suốt ( hào quang ngoài + lõi sáng )
+        if (!map.getLayer('supply-bezier-glow')) {
+          map.addLayer({
+            id: 'supply-bezier-glow',
+            type: 'line',
+            source: 'supply-bezier-arcs',
+            layout: {
+              'line-cap': 'round',
+              'line-join': 'round',
+            },
+            paint: {
+              'line-color': ['get', 'color'],
+              'line-width': [
+                'interpolate',
+                ['linear'],
+                ['zoom'],
+                2,
+                3.5,
+                8,
+                5.5,
+                15,
+                8,
+              ],
+              'line-blur': 2.5,
+              'line-opacity': ['get', 'glowOpacity'],
+            },
+          });
+        }
+
+        if (!map.getLayer('supply-bezier-core')) {
+          map.addLayer({
+            id: 'supply-bezier-core',
+            type: 'line',
+            source: 'supply-bezier-arcs',
+            layout: {
+              'line-cap': 'round',
+              'line-join': 'round',
+            },
+            paint: {
+              'line-color': ['get', 'coreColor'],
+              'line-width': [
+                'interpolate',
+                ['linear'],
+                ['zoom'],
+                2,
+                1.6,
+                8,
+                2.4,
+                15,
+                3.4,
+              ],
+              'line-opacity': ['get', 'coreOpacity'],
+            },
+          });
+        }
+
+        // Layer vòng sóng lóe sáng tại Nhà máy (tâm phát) & tại Trại đích khi chấm sáng chạm tới (t ≈ 1)
+        if (!map.getLayer('supply-impact-rings-layer')) {
+          map.addLayer({
+            id: 'supply-impact-rings-layer',
+            type: 'circle',
+            source: 'supply-impact-rings',
+            paint: {
+              'circle-pitch-alignment': 'map',
+              'circle-radius': ['get', 'radius'],
+              'circle-color': ['get', 'color'],
+              'circle-opacity': ['get', 'fillOpacity'],
+              'circle-stroke-width': ['get', 'strokeWidth'],
+              'circle-stroke-color': ['get', 'strokeColor'],
+              'circle-stroke-opacity': ['get', 'strokeOpacity'],
+            },
+          });
+        }
+
+        // Layer các hạt chấm sáng phát quang nối đuôi nhau chạy một chiều (Nhà máy -> Trại)
+        if (!map.getLayer('supply-particles-glow')) {
+          map.addLayer({
+            id: 'supply-particles-glow',
+            type: 'circle',
+            source: 'supply-particles',
+            paint: {
+              'circle-pitch-alignment': 'map',
+              'circle-radius': ['get', 'glowRadius'],
+              'circle-color': ['get', 'color'],
+              'circle-blur': 0.55,
+              'circle-opacity': ['get', 'glowOpacity'],
+            },
+          });
+        }
+
+        if (!map.getLayer('supply-particles-core')) {
+          map.addLayer({
+            id: 'supply-particles-core',
+            type: 'circle',
+            source: 'supply-particles',
+            paint: {
+              'circle-pitch-alignment': 'map',
+              'circle-radius': ['get', 'coreRadius'],
+              'circle-color': '#fef08a',
+              'circle-stroke-width': 1.2,
+              'circle-stroke-color': '#ffffff',
+              'circle-opacity': ['get', 'coreOpacity'],
+              'circle-stroke-opacity': ['get', 'coreOpacity'],
+            },
+          });
+        }
 
         // 6. MỘT GeoJSON source duy nhất "farms" cho toàn bộ trang trại & nhà máy trung tâm
         const farmsGeoJSON = buildFarmsSourceGeoJSON(allFarms, curHub);
@@ -1132,19 +1331,19 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
                 ['linear'],
                 ['zoom'],
                 1.5,
+                7,
                 6,
-                6,
-                9,
+                10,
                 12,
-                13,
+                14,
                 16,
-                16,
+                17,
               ],
               'circle-color': ['get', 'color'],
-              'circle-opacity': 0.24,
-              'circle-stroke-width': 1.5,
+              'circle-opacity': 0.28,
+              'circle-stroke-width': 1.6,
               'circle-stroke-color': ['get', 'color'],
-              'circle-stroke-opacity': 0.55,
+              'circle-stroke-opacity': 0.65,
             },
           });
         }
@@ -1162,16 +1361,16 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
                 ['linear'],
                 ['zoom'],
                 1.5,
-                4.5,
+                5.0,
                 3.5,
-                5.2,
+                5.5,
                 6,
-                3.2,
-                15,
                 3.8,
+                15,
+                4.2,
               ],
               'circle-color': ['get', 'color'],
-              'circle-stroke-width': 1.6,
+              'circle-stroke-width': 1.8,
               'circle-stroke-color': '#ffffff',
             },
           });
@@ -1191,19 +1390,19 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
                 ['linear'],
                 ['zoom'],
                 2,
-                12,
+                14,
                 6,
-                16,
+                18,
                 12,
-                21,
+                22,
                 16,
-                25,
+                26,
               ],
               'circle-color': '#facc15',
-              'circle-opacity': 0.28,
-              'circle-stroke-width': 2.5,
+              'circle-opacity': 0.32,
+              'circle-stroke-width': 2.6,
               'circle-stroke-color': '#facc15',
-              'circle-stroke-opacity': 0.95,
+              'circle-stroke-opacity': 0.98,
             },
           });
         }
@@ -1220,6 +1419,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
             filter: ['!=', ['get', 'id'], '__CENTRAL_HUB__'],
             layout: {
               'text-field': ['get', 'name'],
+              'text-font': ['Noto Sans Regular'],
               'text-size': [
                 'interpolate',
                 ['linear'],
@@ -1253,6 +1453,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
             filter: ['==', ['get', 'id'], '__CENTRAL_HUB__'],
             layout: {
               'text-field': ['get', 'name'],
+              'text-font': ['Noto Sans Regular'],
               'text-size': 11.5,
               'text-anchor': 'left',
               'text-offset': [1.4, -1.2],
@@ -1267,9 +1468,9 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
                 'interpolate',
                 ['linear'],
                 ['zoom'],
-                9.0,
+                8.5,
                 0,
-                9.8,
+                9.5,
                 1,
               ],
             },
@@ -1280,7 +1481,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         // - icon-anchor: "bottom" (mũi ghim trùng đúng toạ độ)
         // - icon-allow-overlap: true, icon-ignore-placement: true
         // - icon-pitch-alignment: "viewport", icon-rotation-alignment: "viewport"
-        // - icon-size nội suy mượt theo zoom (~0.5 ở zoom 6, ~0.7 ở zoom 12, ~0.85 từ zoom 15+)
+        // - icon-size nội suy mượt theo zoom (từ toàn cầu zoom 1.5 -> Việt Nam zoom 6 -> phóng sát zoom 15+)
         // - Thứ tự chồng lấp: Điểm phía nam (vĩ độ thấp hơn) vẽ đè lên điểm phía bắc: symbol-sort-key = 90 - lat
         if (!map.getLayer('farm-icons')) {
           map.addLayer({
@@ -1293,16 +1494,18 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
                 'interpolate',
                 ['linear'],
                 ['zoom'],
-                2,
-                0.38 * deviceFactor,
+                1.35,
+                0.42 * deviceFactor,
+                2.5,
+                0.48 * deviceFactor,
                 6,
-                0.5 * deviceFactor,
+                0.56 * deviceFactor,
                 12,
-                0.7 * deviceFactor,
+                0.72 * deviceFactor,
                 15,
-                0.85 * deviceFactor,
+                0.86 * deviceFactor,
                 18,
-                0.88 * deviceFactor,
+                0.9 * deviceFactor,
               ],
               'icon-anchor': 'bottom',
               'icon-offset': [0, 0],
@@ -1313,17 +1516,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
               'symbol-sort-key': ['-', 90, ['get', 'lat']],
             },
             paint: {
-              'icon-opacity': [
-                'interpolate',
-                ['linear'],
-                ['zoom'],
-                1.65,
-                0,
-                2.25,
-                1,
-                18,
-                1,
-              ],
+              'icon-opacity': 1,
             },
           });
         }
@@ -1341,16 +1534,18 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
                 'interpolate',
                 ['linear'],
                 ['zoom'],
-                2,
-                0.38 * 1.25 * deviceFactor,
+                1.35,
+                0.42 * 1.25 * deviceFactor,
+                2.5,
+                0.48 * 1.25 * deviceFactor,
                 6,
-                0.5 * 1.25 * deviceFactor,
+                0.56 * 1.25 * deviceFactor,
                 12,
-                0.7 * 1.25 * deviceFactor,
+                0.72 * 1.25 * deviceFactor,
                 15,
-                0.85 * 1.25 * deviceFactor,
+                0.86 * 1.25 * deviceFactor,
                 18,
-                0.88 * 1.25 * deviceFactor,
+                0.9 * 1.25 * deviceFactor,
               ],
               'icon-anchor': 'bottom',
               'icon-offset': [0, 0],
@@ -1397,14 +1592,21 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
       const map = new maplibregl.Map({
         container: mapContainerRef.current,
         style: initialStyle,
-        center: [centralHub.lng - 8, centralHub.lat + 1.2],
-        zoom: 2.35,
+        center: [centralHub.lng, centralHub.lat],
+        zoom: 2.55,
         minZoom: 1.35,
         maxZoom: 18,
         pitch: 15,
         bearing: 0,
         maxPitch: 75,
         pixelRatio: getOptimalPixelRatio(liteMode),
+        maxTileCacheSize: 512,
+        fadeDuration: 0,
+        refreshExpiredTiles: false,
+        canvasContextAttributes: {
+          powerPreference: 'high-performance',
+          antialias: true,
+        },
         attributionControl: false,
       });
 
@@ -1423,10 +1625,10 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
       map.addControl(deckOverlay as unknown as maplibregl.IControl);
       deckOverlayRef.current = deckOverlay;
 
-      // Tự động tạo ảnh icon nếu MapLibre báo thiếu sau khi đổi nền bản đồ (styleimagemissing)
+      // Tự động tạo ảnh icon ĐỒNG BỘ 100% nếu MapLibre báo thiếu sau khi đổi nền bản đồ (styleimagemissing)
       map.on('styleimagemissing', (e) => {
-        if (e?.id && e.id.startsWith('farm-icon-')) {
-          void addSingleFarmIconToMap(map, e.id);
+        if (e?.id) {
+          addSingleFarmIconToMap(map, e.id);
         }
       });
 
@@ -1669,9 +1871,18 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         }
       });
 
+      // Đăng ký ngay bộ ảnh icon Canvas 2D trước và ngay khi bản đồ load
+      registerMapLibreFarmIcons(map);
+
       map.on('load', () => {
         isMapLoadedRef.current = true;
         setupCustomLayers(map);
+        // Pre-warm (tải trước) các tile ảnh vệ tinh khu vực Việt Nam & Nhà máy Trung tâm Thái Việt
+        prewarmSatelliteTilesAround(
+          Number(latestStateRef.current.centralHub.lng),
+          Number(latestStateRef.current.centralHub.lat),
+          12
+        );
       });
 
       mapRef.current = map;
@@ -1728,7 +1939,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
           !latestStateRef.current.isHubSelected
         ) {
           const center = map.getCenter();
-          map.setCenter([center.lng + 0.075, center.lat]);
+          map.setCenter([center.lng + 0.065, center.lat]);
         }
         animId = requestAnimationFrame(rotateGlobe);
       };
@@ -1760,6 +1971,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
       map.setStyle(nextStyle);
 
       map.once('style.load', () => {
+        registerMapLibreFarmIcons(map);
         map.jumpTo({
           center: savedCenter,
           zoom: savedZoom,
@@ -2009,11 +2221,15 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
     }, [visibleFarms, biosecurityRadius, liteMode, stage]);
 
     /**
-     * PHẦN B: ĐƯỜNG CUNG VỆT SÁNG TỪ NHÀ MÁY TRUNG TÂM CHỈ NỐI TRẠI GÀ VÀ TRẠI HEO
-     * - Mặc định ẩn toàn bộ đường cung.
-     * - Chỉ khởi tạo ArcLayer khi đang chọn Nhà máy Trung tâm (isHubSelected) hoặc bật đường đơn lẻ (singleArcFarmId),
-     *   và huỷ hoàn toàn ArcLayer khi tắt.
-     * - Cộng độ cao địa hình ở hai đầu bằng map.queryTerrainElevation để không chìm vào đồi núi.
+     * PHẦN 3: LUỒNG CUNG ỨNG CHẤM SÁNG CHẠY MỘT CHIỀU TỪ NHÀ MÁY ➔ TRẠI GÀ & TRẠI HEO
+     * - Chỉ nối tới các trại Gà và trại Heo đang được bật hiển thị (visibleFarms).
+     *   Khi tắt chip lọc một nhóm (ví dụ tắt Trại gà hoặc Trại heo), đường nối và chấm sáng tới nhóm đó tự ẩn ngay lập tức.
+     * - Kết hợp:
+     *   1) Đường cung 3D trên cao (deck.gl ArcLayer) với gradient vàng #facc15 ➔ cam #fb923c (trại gà) / hồng san hô #fb7185 (trại heo).
+     *   2) Đường cong Bezier mượt trên bề mặt địa cầu/bản đồ (`supply-bezier-arcs`) kèm chuỗi chấm sáng sao chổi (glowing particles)
+     *      chạy liên tục một chiều từ Nhà máy (t = 0) ➔ Trại (t = 1) trên GeoJSON source `supply-particles`.
+     *   3) Tâm phát năng lượng lan tỏa liên tục tại Nhà máy trung tâm + Vòng sóng lóe sáng tại trại đích mỗi khi chấm sáng chạm tới (t ≈ 1)
+     *      trên GeoJSON source `supply-impact-rings`.
      */
     const activeTargetFarms = useMemo(() => {
       if (isHubSelected) {
@@ -2066,8 +2282,51 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
       let animId: number;
       let phase = 0;
 
+      const clearSupplyGeoJSONSources = () => {
+        const map = mapRef.current;
+        if (!map || !isMapLoadedRef.current) return;
+        const empty = {
+          type: 'FeatureCollection' as const,
+          features: [],
+        };
+        try {
+          (
+            map.getSource('supply-bezier-arcs') as
+              | maplibregl.GeoJSONSource
+              | undefined
+          )?.setData(empty);
+          (
+            map.getSource('supply-particles') as
+              | maplibregl.GeoJSONSource
+              | undefined
+          )?.setData(empty);
+          (
+            map.getSource('supply-impact-rings') as
+              | maplibregl.GeoJSONSource
+              | undefined
+          )?.setData(empty);
+        } catch {
+          // ignore
+        }
+      };
+
+      const evaluateQuadraticBezier = (
+        p0: [number, number],
+        p1: [number, number],
+        p2: [number, number],
+        t: number
+      ): [number, number] => {
+        const inv = 1 - t;
+        const lng =
+          inv * inv * p0[0] + 2 * inv * t * p1[0] + t * t * p2[0];
+        const lat =
+          inv * inv * p0[1] + 2 * inv * t * p1[1] + t * t * p2[1];
+        return [lng, lat];
+      };
+
       const animateArcs = (now: number) => {
         const overlay = deckOverlayRef.current;
+        const map = mapRef.current;
         const mode = arcModeRef.current;
 
         if (!overlay) {
@@ -2077,6 +2336,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
 
         if (mode === 'idle') {
           overlay.setProps({ layers: [] });
+          clearSupplyGeoJSONSources();
           return;
         }
 
@@ -2088,81 +2348,211 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         if (farmsForArcs.length === 0) {
           arcModeRef.current = 'idle';
           overlay.setProps({ layers: [] });
+          clearSupplyGeoJSONSources();
           return;
         }
 
         const elapsedMs = now - arcTransitionStartRef.current;
         let globalFade = 1;
 
-        if (mode === 'growing' && elapsedMs >= 1250) {
+        if (mode === 'growing' && elapsedMs >= 1200) {
           arcModeRef.current = 'active';
         } else if (mode === 'shrinking') {
-          if (elapsedMs >= 600) {
+          if (elapsedMs >= 550) {
             arcModeRef.current = 'idle';
             prevActiveTargetsRef.current = [];
             overlay.setProps({ layers: [] });
+            clearSupplyGeoJSONSources();
             return;
           }
-          globalFade = Math.max(0, 1 - elapsedMs / 600);
+          globalFade = Math.max(0, 1 - elapsedMs / 550);
         }
 
-        phase += liteMode ? 0.015 : 0.024;
+        phase += liteMode ? 0.014 : 0.019;
         const total = Math.max(1, farmsForArcs.length);
-        const hubElev = getPointElevationMeters(
-          Number(centralHub.lng),
-          Number(centralHub.lat)
-        );
+        const hubLng = Number(centralHub.lng);
+        const hubLat = Number(centralHub.lat);
+        const hubElev = getPointElevationMeters(hubLng, hubLat);
+
+        const bezierLineFeatures: GeoJSON.Feature[] = [];
+        const particleFeatures: GeoJSON.Feature[] = [];
+        const impactRingFeatures: GeoJSON.Feature[] = [];
+
+        // 1. Vòng xung năng lượng lan tỏa liên tục quanh Nhà máy Trung tâm (tâm phát nguồn cung)
+        for (let rIdx = 0; rIdx < 2; rIdx++) {
+          const hubWave = (phase * 0.85 + rIdx * 0.5) % 1;
+          impactRingFeatures.push({
+            type: 'Feature',
+            properties: {
+              radius: 10 + hubWave * 28,
+              color: '#38bdf8',
+              fillOpacity: Math.max(0, (1 - hubWave) * 0.25 * globalFade),
+              strokeWidth: 2.4,
+              strokeColor: '#facc15',
+              strokeOpacity: Math.max(0, (1 - hubWave) * 0.92 * globalFade),
+            },
+            geometry: {
+              type: 'Point',
+              coordinates: [hubLng, hubLat],
+            },
+          });
+        }
 
         const arcData = farmsForArcs.map((farm, idx) => {
           let reachProgress = 1;
           if (arcModeRef.current === 'growing') {
-            const staggerDelay = total > 1 ? (idx / (total - 1)) * 480 : 0;
+            const staggerDelay = total > 1 ? (idx / (total - 1)) * 420 : 0;
             const localElapsed = Math.max(0, elapsedMs - staggerDelay);
-            const rawT = Math.min(1, localElapsed / 720);
+            const rawT = Math.min(1, localElapsed / 680);
             reachProgress = 1 - Math.pow(1 - rawT, 3);
           } else if (arcModeRef.current === 'shrinking') {
-            const shrinkT = Math.min(1, elapsedMs / 600);
+            const shrinkT = Math.min(1, elapsedMs / 550);
             reachProgress = Math.max(0, 1 - shrinkT);
           }
 
-          const farmElev = getPointElevationMeters(
-            Number(farm.lng),
-            Number(farm.lat)
-          );
+          const farmLng = Number(farm.lng);
+          const farmLat = Number(farm.lat);
+          const farmElev = getPointElevationMeters(farmLng, farmLat);
+
+          // Điểm điều khiển đường cong Bezier lệch vuông góc với đoạn nối Nhà máy -> Trại
+          const dx = farmLng - hubLng;
+          const dy = farmLat - hubLat;
+          const bendSign = idx % 2 === 0 ? 1 : -1;
+          const bendFactor = 0.18 * bendSign;
+          const ctrlPt: [number, number] = [
+            hubLng + dx * 0.5 - dy * bendFactor,
+            hubLat + dy * 0.5 + dx * bendFactor,
+          ];
+
+          const isPig = farm.category === 'pig';
+          const lineColor = isPig ? '#fb7185' : '#fb923c';
+          const coreColor = isPig ? '#fda4af' : '#fdba74';
+
+          // Tạo đường cong Bezier mượt từ Nhà máy (t = 0) đến vị trí reachProgress hiện tại
+          if (reachProgress > 0.03) {
+            const steps = 20;
+            const coords: Array<[number, number]> = [];
+            for (let s = 0; s <= steps; s++) {
+              const t = (s / steps) * reachProgress;
+              coords.push(
+                evaluateQuadraticBezier(
+                  [hubLng, hubLat],
+                  ctrlPt,
+                  [farmLng, farmLat],
+                  t
+                )
+              );
+            }
+
+            bezierLineFeatures.push({
+              type: 'Feature',
+              properties: {
+                id: `bezier-${farm.id}`,
+                color: lineColor,
+                coreColor,
+                glowOpacity: 0.36 * globalFade,
+                coreOpacity: 0.72 * globalFade,
+              },
+              geometry: {
+                type: 'LineString',
+                coordinates: coords,
+              },
+            });
+          }
+
+          // Tạo 2 luồng chấm sáng dạng đuôi sao chổi (mỗi luồng gồm 1 đầu hạt sáng + 3 hạt đuôi mờ dần)
+          // chạy liên tục một chiều từ Nhà máy (t = 0) ➔ Trại (t = 1)
+          const streamCount = liteMode ? 1 : 2;
+          const trailSteps = liteMode ? 2 : 4;
+
+          for (let sIdx = 0; sIdx < streamCount; sIdx++) {
+            const headT =
+              ((phase * 0.52 + idx * 0.17 + sIdx * (1 / streamCount)) % 1) *
+              reachProgress;
+
+            for (let tr = 0; tr < trailSteps; tr++) {
+              const trailT = headT - tr * 0.032;
+              if (trailT <= 0.01 || trailT > reachProgress) continue;
+
+              const pt = evaluateQuadraticBezier(
+                [hubLng, hubLat],
+                ctrlPt,
+                [farmLng, farmLat],
+                trailT
+              );
+              const tailFactor = 1 - tr / trailSteps;
+
+              particleFeatures.push({
+                type: 'Feature',
+                properties: {
+                  color: tr === 0 ? '#facc15' : lineColor,
+                  coreRadius: (tr === 0 ? 3.8 : 2.5 * tailFactor),
+                  glowRadius: (tr === 0 ? 8.5 : 5.8 * tailFactor),
+                  coreOpacity: (tr === 0 ? 0.98 : 0.75 * tailFactor) * globalFade,
+                  glowOpacity: (tr === 0 ? 0.78 : 0.48 * tailFactor) * globalFade,
+                },
+                geometry: {
+                  type: 'Point',
+                  coordinates: pt,
+                },
+              });
+            }
+
+            // Khi chấm sáng đầu chạm tới trại đích (headT ≈ 0.82 -> 1.0), kích hoạt vòng sóng lóe sáng tại trại đích
+            if (reachProgress > 0.92 && headT >= 0.8) {
+              const impactWave = (headT - 0.8) / 0.2; // 0 -> 1
+              impactRingFeatures.push({
+                type: 'Feature',
+                properties: {
+                  radius: 6 + impactWave * 19,
+                  color: lineColor,
+                  fillOpacity: Math.max(
+                    0,
+                    (1 - impactWave) * 0.35 * globalFade
+                  ),
+                  strokeWidth: 2.2,
+                  strokeColor: '#fef08a',
+                  strokeOpacity: Math.max(
+                    0,
+                    (1 - impactWave) * 0.95 * globalFade
+                  ),
+                },
+                geometry: {
+                  type: 'Point',
+                  coordinates: [farmLng, farmLat],
+                },
+              });
+            }
+          }
 
           const currentTargetLng =
-            centralHub.lng + (farm.lng - centralHub.lng) * reachProgress;
+            hubLng + (farmLng - hubLng) * reachProgress;
           const currentTargetLat =
-            centralHub.lat + (farm.lat - centralHub.lat) * reachProgress;
+            hubLat + (farmLat - hubLat) * reachProgress;
           const currentTargetElev =
             hubElev + (farmElev - hubElev) * reachProgress;
 
-          const particleT = ((phase * 0.55 + idx * 0.21) % 1) * reachProgress;
-          const particleLng =
-            centralHub.lng + (farm.lng - centralHub.lng) * particleT;
-          const particleLat =
-            centralHub.lat + (farm.lat - centralHub.lat) * particleT;
-          const particleElev = hubElev + (farmElev - hubElev) * particleT;
+          const deckHeadT = ((phase * 0.52 + idx * 0.17) % 1) * reachProgress;
+          const particleLng = hubLng + (farmLng - hubLng) * deckHeadT;
+          const particleLat = hubLat + (farmLat - hubLat) * deckHeadT;
+          const particleElev = hubElev + (farmElev - hubElev) * deckHeadT;
 
           const pulse = (Math.sin(phase * 2.5 - idx * 0.7) + 1) / 2;
 
           // Trại gà = Cam #fb923c [251, 146, 60]; Trại heo = Hồng san hô #fb7185 [251, 113, 133]
-          const targetRgb: [number, number, number] =
-            farm.category === 'pig' ? [251, 113, 133] : [251, 146, 60];
+          const targetRgb: [number, number, number] = isPig
+            ? [251, 113, 133]
+            : [251, 146, 60];
 
           return {
             id: farm.id,
-            source: [
-              Number(centralHub.lng),
-              Number(centralHub.lat),
-              hubElev,
-            ] as [number, number, number],
+            source: [hubLng, hubLat, hubElev] as [number, number, number],
             target: [currentTargetLng, currentTargetLat, currentTargetElev] as [
               number,
               number,
               number,
             ],
-            exactFarmPos: [Number(farm.lng), Number(farm.lat), farmElev] as [
+            exactFarmPos: [farmLng, farmLat, farmElev] as [
               number,
               number,
               number,
@@ -2179,6 +2569,38 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
           };
         });
 
+        // Cập nhật 3 GeoJSON sources trên MapLibre GL (Bezier đường cung + Hạt chấm sáng sao chổi + Vòng sóng lóe sáng)
+        if (map && isMapLoadedRef.current) {
+          try {
+            (
+              map.getSource('supply-bezier-arcs') as
+                | maplibregl.GeoJSONSource
+                | undefined
+            )?.setData({
+              type: 'FeatureCollection',
+              features: bezierLineFeatures,
+            });
+            (
+              map.getSource('supply-particles') as
+                | maplibregl.GeoJSONSource
+                | undefined
+            )?.setData({
+              type: 'FeatureCollection',
+              features: particleFeatures,
+            });
+            (
+              map.getSource('supply-impact-rings') as
+                | maplibregl.GeoJSONSource
+                | undefined
+            )?.setData({
+              type: 'FeatureCollection',
+              features: impactRingFeatures,
+            });
+          } catch {
+            // ignore
+          }
+        }
+
         const mainArcLayer = new ArcLayer({
           id: 'thaiviet-connectable-arcs',
           data: arcData,
@@ -2188,16 +2610,16 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
             250,
             204,
             21,
-            Math.round(235 * d.alphaScale),
+            Math.round(190 * d.alphaScale),
           ],
           getTargetColor: (d): [number, number, number, number] => [
             d.targetRgb[0],
             d.targetRgb[1],
             d.targetRgb[2],
-            Math.round(245 * d.alphaScale),
+            Math.round(210 * d.alphaScale),
           ],
-          getWidth: (d) => 3.2 + d.pulse * 1.1,
-          getHeight: 0.42,
+          getWidth: (d) => 2.6 + d.pulse * 0.9,
+          getHeight: 0.35,
           greatCircle: true,
           updateTriggers: {
             getTargetPosition: [elapsedMs, mode],
@@ -2233,7 +2655,6 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
           endpointGlowLayer,
         ];
 
-        // Chế độ nhẹ: bỏ hạt chạy, chỉ vẽ nét đơn giản
         if (!liteMode) {
           const particleLayer = new ScatterplotLayer({
             id: 'thaiviet-arc-particles',
