@@ -565,9 +565,6 @@ export default function App() {
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  const [isTourRunning, setIsTourRunning] = useState(false);
-  const [tourIndex, setTourIndex] = useState(0);
-
   const mapSceneRef = useRef<MapSceneHandle | null>(null);
 
   useEffect(() => {
@@ -1164,9 +1161,30 @@ export default function App() {
     setSelectedFarmId(null);
     setIsHubSelected(false);
     setSingleArcFarmId(null);
-    setIsTourRunning(false);
     mapSceneRef.current?.clearCameraPadding();
   }, []);
+
+  /**
+   * Nút "Trở về ban đầu":
+   * 1. Đóng toàn bộ card thông tin trang trại/nhà máy đang mở và xóa text trong ô chọn điểm.
+   * 2. Tắt trạng thái chọn Nhà máy trung tâm (tắt các đường cung & chấm sáng độ phủ nếu đang bật).
+   * 3. Bật lại cả 3 chip lọc (Trại gà = true, Trại heo = true, Khác = true) để hiển thị đầy đủ tất cả các điểm.
+   * 4. Đưa camera bay mượt mà về góc nhìn tổng quan ban đầu (trên Địa cầu 3D: hướng về khu vực Việt Nam / Đông Nam Á;
+   *    trên Bản đồ chi tiết: flyTo về góc nhìn bao quát toàn bộ các trang trại và nhà máy trung tâm với pitch: 0, bearing: 0, padding: 0).
+   */
+  const handleResetToInitialView = useCallback(() => {
+    setSelectedFarmId(null);
+    setIsHubSelected(false);
+    setSingleArcFarmId(null);
+    setSearchQuery('');
+    setActiveCategories({
+      chicken: true,
+      pig: true,
+      other: true,
+    });
+    soundEngine.playWhoosh(soundEnabled, 1.5);
+    mapSceneRef.current?.resetToInitialView(stage);
+  }, [soundEnabled, stage]);
 
   // Nhấn phím Esc để đóng card thông tin / bỏ chọn Nhà máy trung tâm và thu hồi đường kết nối
   useEffect(() => {
@@ -1185,7 +1203,6 @@ export default function App() {
   const handleSelectHub = useCallback(() => {
     setSelectedFarmId(null);
     setSingleArcFarmId(null);
-    setIsTourRunning(false);
     setIsHubSelected(true);
     setMobileSheetSnap('half');
     soundEngine.playPing(soundEnabled);
@@ -1199,7 +1216,6 @@ export default function App() {
     setSelectedFarmId(null);
     setIsHubSelected(false);
     setSingleArcFarmId(null);
-    setIsTourRunning(false);
     setStage('map');
     soundEngine.playWhoosh(soundEnabled, 2.2);
     mapSceneRef.current?.flyToOverview(5000, isFromGlobe ? 65 : 60);
@@ -1278,53 +1294,10 @@ export default function App() {
     handleSelectFarm(filteredFarms[nextIdx]);
   };
 
-  // Cách vào bản đồ (c): Bấm TOUR TỰ ĐỘNG -> chuyển xuống bản đồ rồi chạy tour
-  useEffect(() => {
-    if (!isTourRunning) return;
-    if (filteredFarms.length === 0) {
-      setIsTourRunning(false);
-      return;
-    }
-
-    const currentFarm = filteredFarms[tourIndex % filteredFarms.length];
-    if (currentFarm) {
-      setSelectedFarmId(currentFarm.id);
-      soundEngine.playPing(soundEnabled);
-      soundEngine.playWhoosh(soundEnabled, 1.4);
-      mapSceneRef.current?.flyToFarm(currentFarm, 15.8);
-    }
-
-    const timer = setTimeout(() => {
-      setTourIndex((prev) => (prev + 1) % filteredFarms.length);
-    }, 4300);
-
-    return () => clearTimeout(timer);
-  }, [isTourRunning, tourIndex, filteredFarms, soundEnabled]);
-
-  const handleToggleTour = () => {
-    if (isTourRunning) {
-      setIsTourRunning(false);
-      showToast('Đã dừng Tour tham quan tự động.');
-    } else {
-      if (filteredFarms.length === 0) return;
-      if (stage === 'globe') {
-        setStage('map');
-      }
-      setIsHubSelected(false);
-      setSingleArcFarmId(null);
-      setTourIndex(0);
-      setIsTourRunning(true);
-      showToast(
-        `Bắt đầu Tour tự động qua ${filteredFarms.length} trang trại...`
-      );
-    }
-  };
-
   // Xử lý sau khi nạp file KML / CSV / GeoJSON thủ công (không tự chuyển cảnh, địa cầu vẫn xoay)
   const handleImportSuccess = (result: ParseResult) => {
     applySyncedFarmsWithDiff(result.farms);
     setSelectedFarmId(null);
-    setIsTourRunning(false);
     setActiveCategories({ chicken: true, pig: true, other: true });
 
     const nowStr = formatTimeHHMM();
@@ -1445,7 +1418,6 @@ export default function App() {
         activeCategories={activeCategories}
         searchQuery={searchQuery}
         biosecurityRadius={biosecurityRadius}
-        isTourRunning={isTourRunning}
         mapStyleMode={mapStyleMode}
         timeOfDay={timeOfDay}
         liteMode={liteMode}
@@ -1488,10 +1460,7 @@ export default function App() {
             onToggleCategory={handleToggleCategory}
             biosecurityRadius={biosecurityRadius}
             onRadiusChange={setBiosecurityRadius}
-            isTourRunning={isTourRunning}
-            tourIndex={tourIndex}
-            tourTotal={filteredFarms.length}
-            onToggleTour={handleToggleTour}
+            onResetToInitial={handleResetToInitialView}
             mapStyleMode={mapStyleMode}
             onToggleMapStyle={handleToggleMapStyle}
             timeOfDay={timeOfDay}

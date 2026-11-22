@@ -15,15 +15,14 @@ import {
   LogOut,
   Map,
   Moon,
-  Play,
   Radar,
   RefreshCw,
+  RotateCcw,
   Satellite,
   Search,
   Settings,
   ShieldCheck,
   Sliders,
-  Square,
   Sun,
   Sunrise,
   Sunset,
@@ -65,10 +64,7 @@ interface TopControlHUDProps {
   onToggleCategory: (cat: FarmCategory) => void;
   biosecurityRadius: number;
   onRadiusChange: (r: number) => void;
-  isTourRunning: boolean;
-  tourIndex: number;
-  tourTotal: number;
-  onToggleTour: () => void;
+  onResetToInitial: () => void;
   mapStyleMode: MapStyleMode;
   onToggleMapStyle: () => void;
   timeOfDay: TimeOfDay;
@@ -97,11 +93,11 @@ interface TopControlHUDProps {
 /**
  * BẢNG THỐNG KÊ & ĐIỀU KHIỂN ĐÁP ỨNG MỌI THIẾT BỊ (LAPTOP, IPAD, ĐIỆN THOẠI DỌC & NGANG)
  * - Laptop & iPad (>= 640px):
- *   + Hàng 1: Trái = Bảng Logo + Thống kê; Phải = 3 nút ("TOUR TỰ ĐỘNG", nút tròn La bàn, nút tròn ⚙ "Tùy chỉnh" + huy hiệu "QUẢN TRỊ").
+ *   + Hàng 1: Trái = Bảng Logo + Thống kê; Phải = 3 nút ("Trở về ban đầu", nút tròn La bàn, nút tròn ⚙ "Tùy chỉnh" + huy hiệu "QUẢN TRỊ").
  *   + Hàng 2: Combobox / Searchable Dropdown "Tìm tên trại / địa điểm..." + Chip lọc (Trại gà / Trại heo / Khác).
  * - Điện thoại dọc (< 640px):
  *   + Thanh trên gọn: Logo + tên ngắn + chip thống kê thu gọn (bấm vào để mở rộng/thu gọn) + nút La bàn & nút ⚙ Tùy chỉnh (44x44px).
- *   + Thanh dưới (bottom dock): Chip lọc cuộn ngang nằm ngay trên dock + nút kính lúp tìm kiếm (bấm bung rộng & xổ lên danh sách) + nút "TOUR TỰ ĐỘNG".
+ *   + Thanh dưới (bottom dock): Chip lọc cuộn ngang nằm ngay trên dock + nút kính lúp tìm kiếm (bấm bung rộng & xổ lên danh sách) + nút "Trở về ban đầu".
  * - Điện thoại ngang (chiều cao < 500px):
  *   + Thu gọn thanh trên thành 1 dòng mỏng, các nút chỉ hiện icon 44x44px để không tràn chiều dọc.
  */
@@ -119,10 +115,7 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
   onToggleCategory,
   biosecurityRadius,
   onRadiusChange,
-  isTourRunning,
-  tourIndex,
-  tourTotal,
-  onToggleTour,
+  onResetToInitial,
   mapStyleMode,
   onToggleMapStyle,
   timeOfDay,
@@ -936,19 +929,16 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
 
             <button
               type="button"
-              onClick={onToggleTour}
-              title={isTourRunning ? 'Dừng Tour' : 'Tour tự động'}
-              className={`flex h-9 w-9 items-center justify-center rounded-full text-white shadow-sm cursor-pointer ${
-                isTourRunning
-                  ? 'bg-[#d9261c]'
-                  : 'bg-gradient-to-r from-[#2b8fd0] to-[#10b981]'
-              }`}
+              onClick={() => {
+                setIsLocationDropdownOpen(false);
+                setIsMobileSearchExpanded(false);
+                onResetToInitial();
+              }}
+              title="Trở về ban đầu"
+              className="flex h-9 items-center justify-center gap-1.5 rounded-full bg-gradient-to-r from-[#2b8fd0] to-[#10b981] px-3 text-xs font-extrabold text-white shadow-sm cursor-pointer"
             >
-              {isTourRunning ? (
-                <Square className="h-3.5 w-3.5 fill-current" />
-              ) : (
-                <Play className="h-3.5 w-3.5 fill-current" />
-              )}
+              <RotateCcw className="h-3.5 w-3.5" />
+              <span className="hidden md:inline">Trở về ban đầu</span>
             </button>
 
             <button
@@ -1283,26 +1273,15 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
 
                 <button
                   type="button"
-                  onClick={onToggleTour}
-                  className={`flex h-11 flex-1 items-center justify-center gap-2 rounded-full px-5 text-xs font-extrabold tracking-wide text-white shadow-lg ${
-                    isTourRunning
-                      ? 'bg-[#d9261c]'
-                      : 'bg-gradient-to-r from-[#2b8fd0] to-[#10b981]'
-                  }`}
+                  onClick={() => {
+                    setIsLocationDropdownOpen(false);
+                    setIsMobileSearchExpanded(false);
+                    onResetToInitial();
+                  }}
+                  className="flex h-11 flex-1 items-center justify-center gap-2 rounded-full bg-gradient-to-r from-[#2b8fd0] to-[#10b981] px-5 text-xs font-extrabold tracking-wide text-white shadow-lg"
                 >
-                  {isTourRunning ? (
-                    <>
-                      <Square className="h-3.5 w-3.5 fill-current" />
-                      <span>
-                        DỪNG TOUR ({tourIndex + 1}/{tourTotal})
-                      </span>
-                    </>
-                  ) : (
-                    <>
-                      <Play className="h-3.5 w-3.5 fill-current" />
-                      <span>TOUR TỰ ĐỘNG</span>
-                    </>
-                  )}
+                  <RotateCcw className="h-4 w-4" />
+                  <span>Trở về ban đầu</span>
                 </button>
               </>
             )}
@@ -1453,7 +1432,7 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
             </div>
           </motion.div>
 
-          {/* Khối Phải: 3 nút chính ("TOUR TỰ ĐỘNG", nút tròn La bàn, nút tròn ⚙ "Tùy chỉnh" + huy hiệu "QUẢN TRỊ") */}
+          {/* Khối Phải: 3 nút chính ("Trở về ban đầu", nút tròn La bàn, nút tròn ⚙ "Tùy chỉnh" + huy hiệu "QUẢN TRỊ") */}
           <motion.div
             initial={{ opacity: 0, y: -16 }}
             animate={{ opacity: 1, y: 0 }}
@@ -1465,31 +1444,21 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
             }}
             className="pointer-events-auto flex items-center gap-2.5"
           >
-            {/* 1. Nút chính nổi bật: TOUR TỰ ĐỘNG (cao 44px chuẩn chạm) */}
+            {/* 1. Nút chính nổi bật: Trở về ban đầu (cao 44px chuẩn chạm) */}
             <motion.button
               type="button"
               whileHover={{ y: -2 }}
               whileTap={{ scale: 0.96 }}
-              onClick={onToggleTour}
-              className={`flex h-11 shrink-0 items-center gap-2 rounded-full px-4 text-xs font-extrabold tracking-wide whitespace-nowrap shadow-md transition-all cursor-pointer ${
-                isTourRunning
-                  ? 'bg-[#d9261c] text-white shadow-[0_8px_20px_rgba(217,38,28,0.38)]'
-                  : 'bg-gradient-to-r from-[#2b8fd0] to-[#10b981] text-white shadow-[0_8px_20px_rgba(43,143,208,0.3)]'
-              }`}
+              onClick={() => {
+                setIsLocationDropdownOpen(false);
+                setIsMobileSearchExpanded(false);
+                onResetToInitial();
+              }}
+              title="Đóng thẻ thông tin, bật lại đủ 3 bộ lọc và đưa camera về góc nhìn tổng quan ban đầu"
+              className="flex h-11 shrink-0 items-center gap-2 rounded-full bg-gradient-to-r from-[#2b8fd0] to-[#10b981] px-4 text-xs font-extrabold tracking-wide whitespace-nowrap text-white shadow-[0_8px_20px_rgba(43,143,208,0.3)] transition-all cursor-pointer"
             >
-              {isTourRunning ? (
-                <>
-                  <Square className="h-3.5 w-3.5 fill-current" />
-                  <span>
-                    DỪNG TOUR ({tourIndex + 1}/{tourTotal})
-                  </span>
-                </>
-              ) : (
-                <>
-                  <Play className="h-3.5 w-3.5 fill-current" />
-                  <span>TOUR TỰ ĐỘNG</span>
-                </>
-              )}
+              <RotateCcw className="h-4 w-4" />
+              <span>Trở về ban đầu</span>
             </motion.button>
 
             {/* 2. Nút tròn La bàn (44x44px) */}

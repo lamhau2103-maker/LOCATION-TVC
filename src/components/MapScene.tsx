@@ -7,8 +7,7 @@ import React, {
   useState,
 } from 'react';
 import * as maplibregl from 'maplibre-gl';
-import { MapboxOverlay } from '@deck.gl/mapbox';
-import { ArcLayer, ScatterplotLayer } from '@deck.gl/layers';
+import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
 import { Map as MapIcon } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { APP_CONFIG, getCategoryConfig } from '../config';
@@ -39,6 +38,7 @@ export interface MapSceneHandle {
   flyToHub: () => void;
   flyToConnectedOverview: () => void;
   flyToGlobe: () => void;
+  resetToInitialView: (targetStage: AppStage) => void;
   clearCameraPadding: () => void;
   getPositionDiagnostics: () => PositionDiagnosticItem[];
 }
@@ -62,7 +62,6 @@ interface MapSceneProps {
   activeCategories: Record<FarmCategory, boolean>;
   searchQuery: string;
   biosecurityRadius: number;
-  isTourRunning: boolean;
   mapStyleMode: MapStyleMode;
   timeOfDay: TimeOfDay;
   liteMode: boolean;
@@ -77,6 +76,14 @@ const TERRARIUM_DEM_TILES =
   'https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png';
 
 const FALLBACK_GROUND_COLOR = '#d9ecd0';
+
+try {
+  if (typeof maplibregl.setWorkerUrl === 'function' && maplibreWorkerUrl) {
+    maplibregl.setWorkerUrl(maplibreWorkerUrl);
+  }
+} catch {
+  // ignore
+}
 
 function getTerrainExaggeration(zoom: number, isLite: boolean): number {
   if (isLite) return 0.55;
@@ -314,7 +321,6 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
       activeCategories,
       searchQuery,
       biosecurityRadius,
-      isTourRunning,
       mapStyleMode,
       timeOfDay,
       liteMode,
@@ -324,7 +330,6 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
   ) => {
     const mapContainerRef = useRef<HTMLDivElement | null>(null);
     const mapRef = useRef<maplibregl.Map | null>(null);
-    const deckOverlayRef = useRef<MapboxOverlay | null>(null);
     const isMapLoadedRef = useRef(false);
 
     const esriMaxZoomRef = useRef<number>(16);
@@ -620,6 +625,50 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
           isGlobeDraggingRef.current = false;
         }, 2600);
       },
+      resetToInitialView: (targetStage: AppStage) => {
+        const map = mapRef.current;
+        if (!map) return;
+        if (resumeRotateTimerRef.current) {
+          clearTimeout(resumeRotateTimerRef.current);
+        }
+
+        if (targetStage === 'globe') {
+          isGlobeDraggingRef.current = true;
+          map.flyTo({
+            center: [Number(centralHub.lng), Number(centralHub.lat)],
+            zoom: 2.55,
+            pitch: 15,
+            bearing: 0,
+            padding: { top: 0, right: 0, bottom: 0, left: 0 },
+            duration: 2000,
+            speed: 1.6,
+            curve: 1.2,
+            essential: true,
+          });
+          resumeRotateTimerRef.current = setTimeout(() => {
+            isGlobeDraggingRef.current = false;
+          }, 2200);
+        } else {
+          isGlobeDraggingRef.current = true;
+          const allPoints = latestStateRef.current.farms;
+          const hub = latestStateRef.current.centralHub;
+          const { center, zoom } = getSystemCenterAndZoom(allPoints, hub);
+          const clampedZoom = Math.min(zoom, 16.5);
+          prewarmSatelliteTilesAround(center[0], center[1], clampedZoom);
+
+          map.flyTo({
+            center,
+            zoom: clampedZoom,
+            pitch: 0,
+            bearing: 0,
+            padding: { top: 0, right: 0, bottom: 0, left: 0 },
+            duration: 2200,
+            speed: 1.6,
+            curve: 1.2,
+            essential: true,
+          });
+        }
+      },
       clearCameraPadding: () => {
         const map = mapRef.current;
         if (!map || !isMapLoadedRef.current) return;
@@ -860,7 +909,6 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         curSelectedId: string | null,
         curHubSelected: boolean,
         curHoveredId: string | null,
-        curTourRunning: boolean,
         curQuery: string,
         curMatchedIds: Set<string>,
         curLite: boolean
@@ -925,7 +973,6 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
           // Biểu thức độ mờ (opacity):
           // - Khi chọn Nhà máy Trung tâm: các điểm không nối (văn phòng, kho, rửa xe) mờ xuống 0.35
           // - Khi đang tìm kiếm: các điểm không khớp mờ xuống 0.35
-          // - Khi chạy Tour tự động: các điểm không phải điểm hiện tại mờ xuống 0.48
           const hasSearch = curQuery.length > 0;
           const matchedArray = Array.from(curMatchedIds);
 
@@ -947,13 +994,6 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
               ['in', ['get', 'id'], ['literal', matchedArray]],
               1,
               0.35,
-            ];
-          } else if (curTourRunning && curSelectedId) {
-            featureAlphaExpr = [
-              'case',
-              ['==', ['get', 'id'], curSelectedId],
-              1,
-              0.48,
             ];
           }
 
@@ -1626,7 +1666,6 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
           curSelected?.id || null,
           curHubSelected,
           null,
-          false,
           '',
           new Set(),
           curLite
@@ -1677,13 +1716,6 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         new maplibregl.AttributionControl({ compact: true }),
         'bottom-left'
       );
-
-      const deckOverlay = new MapboxOverlay({
-        interleaved: false,
-        layers: [],
-      });
-      map.addControl(deckOverlay as unknown as maplibregl.IControl);
-      deckOverlayRef.current = deckOverlay;
 
       // Tự động tạo ảnh icon ĐỒNG BỘ 100% nếu MapLibre báo thiếu sau khi đổi nền bản đồ (styleimagemissing)
       map.on('styleimagemissing', (e) => {
@@ -2203,7 +2235,6 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         selectedFarm?.id || null,
         isHubSelected,
         hoveredId,
-        isTourRunning,
         normalizedQuery,
         matchedFarmIds,
         liteMode
@@ -2213,7 +2244,6 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
       selectedFarm,
       isHubSelected,
       hoveredId,
-      isTourRunning,
       normalizedQuery,
       matchedFarmIds,
       liteMode,
@@ -2386,17 +2416,15 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
       };
 
       const animateArcs = (now: number) => {
-        const overlay = deckOverlayRef.current;
         const map = mapRef.current;
         const mode = arcModeRef.current;
 
-        if (!overlay) {
+        if (!map || !isMapLoadedRef.current) {
           animId = requestAnimationFrame(animateArcs);
           return;
         }
 
         if (mode === 'idle') {
-          overlay.setProps({ layers: [] });
           clearSupplyGeoJSONSources();
           return;
         }
@@ -2408,7 +2436,6 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
 
         if (farmsForArcs.length === 0) {
           arcModeRef.current = 'idle';
-          overlay.setProps({ layers: [] });
           clearSupplyGeoJSONSources();
           return;
         }
@@ -2422,7 +2449,6 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
           if (elapsedMs >= 550) {
             arcModeRef.current = 'idle';
             prevActiveTargetsRef.current = [];
-            overlay.setProps({ layers: [] });
             clearSupplyGeoJSONSources();
             return;
           }
@@ -2433,11 +2459,22 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         const total = Math.max(1, farmsForArcs.length);
         const hubLng = Number(centralHub.lng);
         const hubLat = Number(centralHub.lat);
-        const hubElev = getPointElevationMeters(hubLng, hubLat);
 
-        const bezierLineFeatures: GeoJSON.Feature[] = [];
-        const particleFeatures: GeoJSON.Feature[] = [];
-        const impactRingFeatures: GeoJSON.Feature[] = [];
+        const bezierLineFeatures: Array<{
+          type: 'Feature';
+          properties: Record<string, unknown>;
+          geometry: { type: 'LineString'; coordinates: Array<[number, number]> };
+        }> = [];
+        const particleFeatures: Array<{
+          type: 'Feature';
+          properties: Record<string, unknown>;
+          geometry: { type: 'Point'; coordinates: [number, number] };
+        }> = [];
+        const impactRingFeatures: Array<{
+          type: 'Feature';
+          properties: Record<string, unknown>;
+          geometry: { type: 'Point'; coordinates: [number, number] };
+        }> = [];
 
         // 1. Vòng xung năng lượng lan tỏa liên tục quanh Nhà máy Trung tâm (tâm phát nguồn cung)
         for (let rIdx = 0; rIdx < 2; rIdx++) {
@@ -2459,7 +2496,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
           });
         }
 
-        const arcData = farmsForArcs.map((farm, idx) => {
+        farmsForArcs.forEach((farm, idx) => {
           let reachProgress = 1;
           if (arcModeRef.current === 'growing') {
             const staggerDelay = total > 1 ? (idx / (total - 1)) * 420 : 0;
@@ -2473,7 +2510,6 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
 
           const farmLng = Number(farm.lng);
           const farmLat = Number(farm.lat);
-          const farmElev = getPointElevationMeters(farmLng, farmLat);
 
           // Điểm điều khiển đường cong Bezier lệch vuông góc với đoạn nối Nhà máy -> Trại
           const dx = farmLng - hubLng;
@@ -2547,10 +2583,12 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
                 type: 'Feature',
                 properties: {
                   color: tr === 0 ? '#facc15' : lineColor,
-                  coreRadius: (tr === 0 ? 3.8 : 2.5 * tailFactor),
-                  glowRadius: (tr === 0 ? 8.5 : 5.8 * tailFactor),
-                  coreOpacity: (tr === 0 ? 0.98 : 0.75 * tailFactor) * globalFade,
-                  glowOpacity: (tr === 0 ? 0.78 : 0.48 * tailFactor) * globalFade,
+                  coreRadius: tr === 0 ? 3.8 : 2.5 * tailFactor,
+                  glowRadius: tr === 0 ? 8.5 : 5.8 * tailFactor,
+                  coreOpacity:
+                    (tr === 0 ? 0.98 : 0.75 * tailFactor) * globalFade,
+                  glowOpacity:
+                    (tr === 0 ? 0.78 : 0.48 * tailFactor) * globalFade,
                 },
                 geometry: {
                   type: 'Point',
@@ -2585,49 +2623,6 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
               });
             }
           }
-
-          const currentTargetLng =
-            hubLng + (farmLng - hubLng) * reachProgress;
-          const currentTargetLat =
-            hubLat + (farmLat - hubLat) * reachProgress;
-          const currentTargetElev =
-            hubElev + (farmElev - hubElev) * reachProgress;
-
-          const deckHeadT = ((phase * 0.52 + idx * 0.17) % 1) * reachProgress;
-          const particleLng = hubLng + (farmLng - hubLng) * deckHeadT;
-          const particleLat = hubLat + (farmLat - hubLat) * deckHeadT;
-          const particleElev = hubElev + (farmElev - hubElev) * deckHeadT;
-
-          const pulse = (Math.sin(phase * 2.5 - idx * 0.7) + 1) / 2;
-
-          // Trại gà = Cam #fb923c [251, 146, 60]; Trại heo = Hồng san hô #fb7185 [251, 113, 133]
-          const targetRgb: [number, number, number] = isPig
-            ? [251, 113, 133]
-            : [251, 146, 60];
-
-          return {
-            id: farm.id,
-            source: [hubLng, hubLat, hubElev] as [number, number, number],
-            target: [currentTargetLng, currentTargetLat, currentTargetElev] as [
-              number,
-              number,
-              number,
-            ],
-            exactFarmPos: [farmLng, farmLat, farmElev] as [
-              number,
-              number,
-              number,
-            ],
-            particlePos: [particleLng, particleLat, particleElev] as [
-              number,
-              number,
-              number,
-            ],
-            targetRgb,
-            pulse,
-            reachProgress,
-            alphaScale: globalFade * (reachProgress > 0.02 ? 1 : 0),
-          };
         });
 
         // Cập nhật 3 GeoJSON sources trên MapLibre GL (Bezier đường cung + Hạt chấm sáng sao chổi + Vòng sóng lóe sáng)
@@ -2662,90 +2657,12 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
           }
         }
 
-        const mainArcLayer = new ArcLayer({
-          id: 'thaiviet-connectable-arcs',
-          data: arcData,
-          getSourcePosition: (d) => d.source,
-          getTargetPosition: (d) => d.target,
-          getSourceColor: (d): [number, number, number, number] => [
-            250,
-            204,
-            21,
-            Math.round(190 * d.alphaScale),
-          ],
-          getTargetColor: (d): [number, number, number, number] => [
-            d.targetRgb[0],
-            d.targetRgb[1],
-            d.targetRgb[2],
-            Math.round(210 * d.alphaScale),
-          ],
-          getWidth: (d) => 2.6 + d.pulse * 0.9,
-          getHeight: 0.35,
-          greatCircle: true,
-          updateTriggers: {
-            getTargetPosition: [elapsedMs, mode],
-            getSourceColor: [globalFade, elapsedMs],
-            getTargetColor: [globalFade, elapsedMs],
-            getWidth: [phase],
-          },
-        });
-
-        const endpointGlowLayer = new ScatterplotLayer({
-          id: 'thaiviet-arc-endpoints',
-          data: arcData.filter((d) => d.reachProgress > 0.85),
-          getPosition: (d) => d.exactFarmPos,
-          getFillColor: (d): [number, number, number, number] => [
-            d.targetRgb[0],
-            d.targetRgb[1],
-            d.targetRgb[2],
-            Math.round((150 + d.pulse * 105) * d.alphaScale),
-          ],
-          getLineColor: [255, 255, 255, Math.round(240 * globalFade)],
-          getRadius: 450,
-          radiusMinPixels: 4.5,
-          radiusMaxPixels: 9,
-          stroked: true,
-          lineWidthMinPixels: 1.5,
-          updateTriggers: {
-            getFillColor: [phase, globalFade],
-          },
-        });
-
-        const layersList: Array<ArcLayer | ScatterplotLayer> = [
-          mainArcLayer,
-          endpointGlowLayer,
-        ];
-
-        if (!liteMode) {
-          const particleLayer = new ScatterplotLayer({
-            id: 'thaiviet-arc-particles',
-            data: arcData.filter((d) => d.reachProgress > 0.25),
-            getPosition: (d) => d.particlePos,
-            getFillColor: [250, 204, 21, Math.round(245 * globalFade)],
-            getLineColor: [255, 255, 255, Math.round(255 * globalFade)],
-            getRadius: 480,
-            radiusMinPixels: 3,
-            radiusMaxPixels: 6,
-            stroked: true,
-            lineWidthMinPixels: 1.5,
-            updateTriggers: {
-              getPosition: [phase, elapsedMs],
-              getFillColor: [globalFade],
-            },
-          });
-          layersList.push(particleLayer);
-        }
-
-        overlay.setProps({
-          layers: layersList,
-        });
-
         animId = requestAnimationFrame(animateArcs);
       };
 
       animId = requestAnimationFrame(animateArcs);
       return () => cancelAnimationFrame(animId);
-    }, [activeTargetFarms, centralHub, liteMode, getPointElevationMeters]);
+    }, [activeTargetFarms, centralHub, liteMode]);
 
     const currentPreset = APP_CONFIG.timePresets[timeOfDay];
 
