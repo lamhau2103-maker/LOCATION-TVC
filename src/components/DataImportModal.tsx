@@ -9,7 +9,6 @@ import {
   ImagePlus,
   Link2,
   RefreshCw,
-  RotateCcw,
   Sparkles,
   Trash2,
   Upload,
@@ -27,8 +26,6 @@ interface DataImportModalProps {
   isOpen: boolean;
   onClose: () => void;
   onImportSuccess: (result: ParseResult) => void;
-  onResetDefault: () => void;
-  hasCustomData: boolean;
   currentFarmCount: number;
   centralHub: CentralHub;
   onUpdateCentralHub: (hub: CentralHub) => void;
@@ -52,8 +49,6 @@ export const DataImportModal: React.FC<DataImportModalProps> = ({
   isOpen,
   onClose,
   onImportSuccess,
-  onResetDefault,
-  hasCustomData,
   currentFarmCount,
   centralHub,
   onUpdateCentralHub,
@@ -419,24 +414,9 @@ export const DataImportModal: React.FC<DataImportModalProps> = ({
             </button>
           </div>
 
-          {hasCustomData ? (
-            <button
-              type="button"
-              onClick={() => {
-                onResetDefault();
-                onClose();
-              }}
-              className="inline-flex items-center gap-1.5 rounded-full border border-rose-300 bg-rose-50 px-3 py-1.5 text-xs font-bold text-[#d9261c] transition-colors hover:bg-rose-100 cursor-pointer"
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-              Xoá dữ liệu ({currentFarmCount})
-            </button>
-          ) : (
-            <span className="flex items-center gap-1 text-[11px] font-semibold text-[#0f2a24]/60">
-              <RotateCcw className="h-3 w-3" />
-              Đang dùng 5 trại mặc định
-            </span>
-          )}
+          <span className="flex items-center gap-1 text-[11px] font-semibold text-[#0f2a24]/65">
+            Đang hiển thị {currentFarmCount} điểm trên hệ thống
+          </span>
         </div>
 
         {/* Cấu hình nhanh Nhà Máy Trung Tâm */}

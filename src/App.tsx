@@ -451,14 +451,6 @@ export default function App() {
   const [newlyAddedIds, setNewlyAddedIds] = useState<Set<string>>(new Set());
   const [removingFarms, setRemovingFarms] = useState<Farm[]>([]);
 
-  const [hasCustomData, setHasCustomData] = useState<boolean>(() => {
-    try {
-      return Boolean(localStorage.getItem(APP_CONFIG.storageKey));
-    } catch {
-      return false;
-    }
-  });
-
   // 5. Trạng thái đồng bộ tự động Google My Maps
   const [syncState, setSyncState] = useState<SyncState>(() => {
     let savedTime: string | null = null;
@@ -728,7 +720,6 @@ export default function App() {
       setRawFarms(nextFarms);
     }
 
-    setHasCustomData(true);
     try {
       localStorage.setItem(APP_CONFIG.storageKey, JSON.stringify(nextFarms));
     } catch {
@@ -1347,30 +1338,6 @@ export default function App() {
     }
   };
 
-  const handleResetDefault = () => {
-    try {
-      localStorage.removeItem(APP_CONFIG.storageKey);
-      localStorage.removeItem(APP_CONFIG.lastSyncStorageKey);
-      localStorage.removeItem(APP_CONFIG.myMapsIdStorageKey);
-      localStorage.removeItem(APP_CONFIG.myMapsLinkStorageKey);
-    } catch {
-      // ignore
-    }
-    setSavedMyMapsId('');
-    setSavedMyMapsLink('');
-    setRawFarms(defaultFarmsData as unknown as Farm[]);
-    setHasCustomData(false);
-    setSelectedFarmId(null);
-    setIsTourRunning(false);
-    setSyncState({
-      isSyncing: false,
-      lastSyncedTime: null,
-      isOfflineFallback: false,
-      statusText: 'Đang dùng dữ liệu mặc định',
-    });
-    showToast('Đã xoá dữ liệu lưu trữ và khôi phục 5 trang trại mặc định.');
-  };
-
   const handleUpdateCentralHub = (newHub: CentralHub) => {
     setCentralHub(newHub);
     try {
@@ -1525,8 +1492,6 @@ export default function App() {
             soundEnabled={soundEnabled}
             onToggleSound={handleToggleSound}
             onOpenImport={() => setIsImportModalOpen(true)}
-            hasCustomData={hasCustomData}
-            onResetDefault={handleResetDefault}
             onFlyOverview={handleEnterMapOverview}
             onBackToGlobe={() => {
               handleClearSelection();
@@ -1595,8 +1560,6 @@ export default function App() {
         isOpen={isImportModalOpen}
         onClose={() => setIsImportModalOpen(false)}
         onImportSuccess={handleImportSuccess}
-        onResetDefault={handleResetDefault}
-        hasCustomData={hasCustomData}
         currentFarmCount={farms.length}
         centralHub={centralHub}
         onUpdateCentralHub={handleUpdateCentralHub}

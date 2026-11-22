@@ -27,7 +27,6 @@ import {
   Sun,
   Sunrise,
   Sunset,
-  Trash2,
   Upload,
   Volume2,
   VolumeX,
@@ -77,8 +76,6 @@ interface TopControlHUDProps {
   soundEnabled: boolean;
   onToggleSound: () => void;
   onOpenImport: () => void;
-  hasCustomData: boolean;
-  onResetDefault: () => void;
   onFlyOverview: () => void;
   onBackToGlobe: () => void;
   onFlyToHub: () => void;
@@ -132,8 +129,6 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
   soundEnabled,
   onToggleSound,
   onOpenImport,
-  hasCustomData,
-  onResetDefault,
   onFlyOverview,
   onBackToGlobe,
   onFlyToHub,
@@ -284,9 +279,9 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
    */
   const renderSettingsSections = () => (
     <div className="space-y-4 text-xs text-[#0f2a24]">
-      {/* 1. NHÓM DỮ LIỆU */}
+      {/* 1. NHÓM DỮ LIỆU (Chỉ Quản trị viên mới có quyền chỉnh sửa) */}
       <div className="space-y-2">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-1.5 text-[11px] font-extrabold tracking-wider text-[#2b8fd0] uppercase">
             <Database className="h-3.5 w-3.5" />
             <span>1. Dữ liệu</span>
@@ -308,47 +303,56 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-2">
-          <button
-            type="button"
-            onClick={onSyncNow}
-            disabled={syncState.isSyncing}
-            className="flex min-h-[42px] items-center justify-center gap-1.5 rounded-xl bg-[#2b8fd0] px-3 py-2 text-xs font-extrabold text-white shadow-xs transition-colors hover:bg-[#1e74ad] disabled:opacity-60 cursor-pointer"
-          >
-            <RefreshCw
-              className={`h-3.5 w-3.5 ${
-                syncState.isSyncing ? 'animate-spin' : ''
-              }`}
-            />
-            <span>Đồng bộ ngay</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              setIsSettingsOpen(false);
-              onOpenImport();
-            }}
-            className="flex min-h-[42px] items-center justify-center gap-1.5 rounded-xl border border-emerald-950/12 bg-white/90 px-3 py-2 text-xs font-bold text-[#0f2a24] transition-colors hover:border-[#2b8fd0] hover:text-[#2b8fd0] cursor-pointer"
-          >
-            <Upload className="h-3.5 w-3.5 text-[#2b8fd0]" />
-            <span>Nạp dữ liệu</span>
-          </button>
-        </div>
-
-        {hasCustomData && (
-          <button
-            type="button"
-            onClick={() => {
-              onResetDefault();
-              setIsSettingsOpen(false);
-            }}
-            className="flex min-h-[38px] w-full items-center justify-center gap-1.5 rounded-xl border border-rose-200 bg-rose-50/75 px-3 py-1.5 text-[11px] font-bold text-[#d9261c] transition-colors hover:bg-rose-100 cursor-pointer"
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-            <span>Khôi phục dữ liệu mặc định</span>
-          </button>
+        {!isAdmin && (
+          <div className="flex items-center gap-1.5 rounded-xl border border-amber-300/70 bg-amber-50/80 px-2.5 py-1.5 text-[11px] font-bold text-amber-800">
+            <Lock className="h-3 w-3 shrink-0 text-amber-600" />
+            <span>Chỉ quản trị viên mới có quyền chỉnh sửa</span>
+          </div>
         )}
+
+        <div
+          className={
+            !isAdmin
+              ? 'pointer-events-none select-none opacity-45'
+              : 'transition-opacity'
+          }
+          style={
+            !isAdmin
+              ? { opacity: 0.45, pointerEvents: 'none' }
+              : undefined
+          }
+          aria-disabled={!isAdmin}
+        >
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={onSyncNow}
+              disabled={!isAdmin || syncState.isSyncing}
+              className="flex min-h-[42px] items-center justify-center gap-1.5 rounded-xl bg-[#2b8fd0] px-3 py-2 text-xs font-extrabold text-white shadow-xs transition-colors hover:bg-[#1e74ad] disabled:opacity-60 cursor-pointer"
+            >
+              <RefreshCw
+                className={`h-3.5 w-3.5 ${
+                  syncState.isSyncing ? 'animate-spin' : ''
+                }`}
+              />
+              <span>Đồng bộ ngay</span>
+            </button>
+
+            <button
+              type="button"
+              disabled={!isAdmin}
+              onClick={() => {
+                if (!isAdmin) return;
+                setIsSettingsOpen(false);
+                onOpenImport();
+              }}
+              className="flex min-h-[42px] items-center justify-center gap-1.5 rounded-xl border border-emerald-950/12 bg-white/90 px-3 py-2 text-xs font-bold text-[#0f2a24] transition-colors hover:border-[#2b8fd0] hover:text-[#2b8fd0] disabled:opacity-60 cursor-pointer"
+            >
+              <Upload className="h-3.5 w-3.5 text-[#2b8fd0]" />
+              <span>Nạp dữ liệu</span>
+            </button>
+          </div>
+        </div>
       </div>
 
       <div className="h-px bg-emerald-950/10" />

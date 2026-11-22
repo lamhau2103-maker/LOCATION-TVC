@@ -366,8 +366,8 @@ export function getFarmIconSvg(
 }
 
 /**
- * Tạo chuỗi SVG Huy hiệu Ghim 3D chuẩn xác:
- * Đỉnh dưới cùng của mũi ghim nằm ĐÚNG tại (32, 76) - sát mép dưới cùng của viewBox (0 0 64 76)
+ * Tạo chuỗi SVG Huy hiệu Ghim 3D chuẩn xác trên khung 64x64 (vẽ ra canvas 128x128 với pixelRatio: 2):
+ * Đỉnh dưới cùng của mũi ghim nằm ĐÚNG tại (32, 64) - sát mép dưới cùng chính giữa của viewBox (0 0 64 64)
  * để khi MapLibre neo `icon-anchor: 'bottom'` và `icon-offset: [0, 0]`, mũi ghim trùng khít 100% với toạ độ (lat, lng).
  */
 function getMapLibrePinSvg(
@@ -384,32 +384,33 @@ function getMapLibrePinSvg(
       : '#14b8a6';
 
   const outerRing = isSelected
-    ? `<circle cx="32" cy="28" r="27" fill="none" stroke="#facc15" stroke-width="3.5" stroke-opacity="0.95"/>`
+    ? `<circle cx="32" cy="24" r="22.5" fill="none" stroke="#facc15" stroke-width="3" stroke-opacity="0.98"/>`
     : '';
 
-  const innerSvg = getFarmIconSvg(subType, 32)
-    .replace(/<svg[^>]*>/, '<g transform="translate(16, 12)">')
+  const innerSvg = getFarmIconSvg(subType, 28)
+    .replace(/<svg[^>]*>/, '<g transform="translate(18, 10) scale(0.7778)">')
     .replace(/<\/svg>/, '</g>');
 
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 76" width="128" height="152" fill="none">
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="128" height="128" fill="none">
     ${outerRing}
-    <!-- Mũi ghim tam giác chạm đúng điểm đáy (32, 75.5) -->
-    <path d="M23.5 48L32 75.5L40.5 48Z" fill="${borderColor}" stroke="#ffffff" stroke-width="2" stroke-linejoin="round"/>
+    <!-- Mũi ghim tam giác chạm đúng điểm đáy chính giữa (32, 63.8) -->
+    <path d="M24 41L32 63.8L40 41Z" fill="${borderColor}" stroke="#ffffff" stroke-width="1.8" stroke-linejoin="round"/>
     <!-- Vòng tròn trắng viền màu nổi bật -->
-    <circle cx="32" cy="28" r="23.5" fill="#ffffff" stroke="${borderColor}" stroke-width="5"/>
+    <circle cx="32" cy="24" r="20" fill="#ffffff" stroke="${borderColor}" stroke-width="4.5"/>
     ${innerSvg}
-    <!-- Chấm tâm nhỏ ngay đúng đỉnh mũi ghim (32, 75) -->
-    <circle cx="32" cy="74.5" r="2.2" fill="#ffffff" stroke="${borderColor}" stroke-width="1.5"/>
+    <!-- Chấm tâm nhỏ ngay đúng đỉnh mũi ghim (32, 63.2) -->
+    <circle cx="32" cy="63.2" r="1.8" fill="#ffffff" stroke="${borderColor}" stroke-width="1.3"/>
   </svg>`;
 }
 
 /**
- * Chuyển chuỗi SVG thành đối tượng ImageData để gọi `map.addImage(id, imageData)`
+ * Chuyển chuỗi SVG thành đối tượng ImageData để gọi `map.addImage(id, imageData, { pixelRatio: 2 })`
+ * Khung logic 64x64 -> canvas vật lý 128x128 ở pixelRatio: 2
  */
 export function renderSvgToImageData(
   svgString: string,
   width = 128,
-  height = 152
+  height = 128
 ): Promise<ImageData> {
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -442,8 +443,39 @@ export function renderSvgToImageData(
   });
 }
 
+const VALID_SUBTYPES: ReadonlyArray<FarmSubType | 'hub'> = [
+  'chicken',
+  'pig',
+  'other',
+  'office',
+  'warehouse',
+  'wash',
+  'hub',
+];
+
+export async function addSingleFarmIconToMap(
+  map: maplibregl.Map,
+  imageId: string
+): Promise<void> {
+  if (!imageId.startsWith('farm-icon-') || map.hasImage(imageId)) return;
+  const rawType = imageId.replace('farm-icon-', '') as FarmSubType | 'hub';
+  const st: FarmSubType | 'hub' = VALID_SUBTYPES.includes(rawType)
+    ? rawType
+    : 'other';
+
+  try {
+    const svg = getMapLibrePinSvg(st, st === 'hub');
+    const imageData = await renderSvgToImageData(svg, 128, 128);
+    if (!map.hasImage(imageId)) {
+      map.addImage(imageId, imageData, { pixelRatio: 2 });
+    }
+  } catch {
+    // Bỏ qua an toàn nếu bản đồ đã huỷ giữa chừng
+  }
+}
+
 /**
- * Đăng ký đầy đủ bộ ảnh icon vào MapLibre GL bằng `map.addImage`:
+ * Đăng ký đầy đủ bộ ảnh icon vào MapLibre GL bằng `map.addImage` (64x64 logic, pixelRatio: 2):
  * - 'farm-icon-chicken', 'farm-icon-pig', 'farm-icon-other',
  * - 'farm-icon-office', 'farm-icon-warehouse', 'farm-icon-wash',
  * - 'farm-icon-hub' (Nhà máy trung tâm)
@@ -451,29 +483,8 @@ export function renderSvgToImageData(
 export async function registerMapLibreFarmIcons(
   map: maplibregl.Map
 ): Promise<void> {
-  const subTypes: Array<FarmSubType | 'hub'> = [
-    'chicken',
-    'pig',
-    'other',
-    'office',
-    'warehouse',
-    'wash',
-    'hub',
-  ];
-
   await Promise.all(
-    subTypes.map(async (st) => {
-      const imageId = `farm-icon-${st}`;
-      if (map.hasImage(imageId)) return;
-      try {
-        const svg = getMapLibrePinSvg(st, st === 'hub');
-        const imageData = await renderSvgToImageData(svg, 128, 152);
-        if (!map.hasImage(imageId)) {
-          map.addImage(imageId, imageData, { pixelRatio: 2 });
-        }
-      } catch {
-        // Bỏ qua an toàn nếu bản đồ đã huỷ giữa chừng
-      }
-    })
+    VALID_SUBTYPES.map((st) => addSingleFarmIconToMap(map, `farm-icon-${st}`))
   );
 }
+
