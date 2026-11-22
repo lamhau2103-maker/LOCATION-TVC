@@ -10,7 +10,7 @@ import * as maplibregl from 'maplibre-gl';
 import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
 import Globe, { GlobeInstance } from 'globe.gl';
 import * as THREE from 'three';
-import { Map as MapIcon } from 'lucide-react';
+import { Map as MapIcon, Mountain, Satellite } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { APP_CONFIG, getCategoryConfig } from '../config';
 import {
@@ -71,12 +71,22 @@ interface MapSceneProps {
   searchQuery: string;
   biosecurityRadius: number;
   mapStyleMode: MapStyleMode;
+  onSelectMapStyle?: (mode: MapStyleMode) => void;
   timeOfDay: TimeOfDay;
   liteMode: boolean;
   onSatelliteFallbackToStreet?: () => void;
 }
 
+const OPENFREEMAP_LIBERTY_STYLE_URL =
+  'https://tiles.openfreemap.org/styles/liberty';
+
+const OPENFREEMAP_GLYPHS_URL =
+  'https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf';
+
 const OSM_STANDARD_TILES = ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'];
+
+const ESRI_TERRAIN_TOPO_TILES =
+  'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}';
 
 const ESRI_SATELLITE_TILES =
   'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
@@ -171,13 +181,13 @@ function computeCameraPadding(
 }
 
 /**
- * Nền Bản đồ 2D Đường phố / Hành chính OpenStreetMap gốc (miễn phí 100%, không giới hạn domain, không cần API Key)
+ * Nền Bản đồ 2D dự phòng OpenStreetMap gốc (tự kích hoạt nếu OpenFreeMap Liberty gặp sự cố mạng)
  */
-function create2DStreetBaseStyle(): maplibregl.StyleSpecification {
+function createOsmFallbackStyle(): maplibregl.StyleSpecification {
   return {
     version: 8,
     name: 'ThaiViet 2D OpenStreetMap',
-    glyphs: 'https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf',
+    glyphs: OPENFREEMAP_GLYPHS_URL,
     sources: {
       'osm-standard': {
         type: 'raster',
@@ -209,7 +219,46 @@ function create2DStreetBaseStyle(): maplibregl.StyleSpecification {
 }
 
 /**
- * Nền Bản đồ Vệ tinh Esri World Imagery (miễn phí 100%, không cần API Key)
+ * Nền Bản đồ Địa hình (Esri World Topo Map — nổi khối đồi núi, cây xanh, sông hồ, đường quốc lộ & ranh giới, miễn phí 100%)
+ */
+function createTerrainBaseStyle(): maplibregl.StyleSpecification {
+  return {
+    version: 8,
+    name: 'ThaiViet Terrain Topo',
+    glyphs: OPENFREEMAP_GLYPHS_URL,
+    sources: {
+      'esri-world-topo': {
+        type: 'raster',
+        tiles: [ESRI_TERRAIN_TOPO_TILES],
+        tileSize: 256,
+        maxzoom: 18,
+        attribution:
+          'Tiles &copy; Esri &mdash; Esri, DeLorme, NAVTEQ, TomTom, Intermap, iPC, USGS, FAO, NPS, NRCAN, GeoBase, Kadaster NL, Ordnance Survey, Esri Japan, METI, Esri China (Hong Kong), and the GIS User Community',
+      },
+    },
+    layers: [
+      {
+        id: 'fallback-ground-background',
+        type: 'background',
+        paint: {
+          'background-color': '#e2f0d9',
+        },
+      },
+      {
+        id: 'esri-terrain-base',
+        type: 'raster',
+        source: 'esri-world-topo',
+        paint: {
+          'raster-opacity': 1,
+          'raster-fade-duration': 0,
+        },
+      },
+    ],
+  };
+}
+
+/**
+ * Nền Bản đồ Vệ tinh Esri World Imagery (miễn phí 100%, không cần API Key, không phủ mờ)
  */
 function createSatelliteBaseStyle(
   satelliteMaxZoom = 18
@@ -217,7 +266,7 @@ function createSatelliteBaseStyle(
   return {
     version: 8,
     name: 'ThaiViet Satellite 2D',
-    glyphs: 'https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf',
+    glyphs: OPENFREEMAP_GLYPHS_URL,
     sources: {
       'esri-world-imagery': {
         type: 'raster',
@@ -241,14 +290,28 @@ function createSatelliteBaseStyle(
         type: 'raster',
         source: 'esri-world-imagery',
         paint: {
-          'raster-opacity': 0.96,
+          'raster-opacity': 1,
           'raster-fade-duration': 0,
-          'raster-saturation': 0.08,
-          'raster-contrast': 0.06,
         },
       },
     ],
   };
+}
+
+function getBasemapStyle(
+  mode: MapStyleMode,
+  useOsmFallback: boolean,
+  satelliteMaxZoom: number
+): string | maplibregl.StyleSpecification {
+  if (mode === 'satellite') {
+    return createSatelliteBaseStyle(satelliteMaxZoom);
+  }
+  if (mode === 'terrain') {
+    return createTerrainBaseStyle();
+  }
+  return useOsmFallback
+    ? createOsmFallbackStyle()
+    : OPENFREEMAP_LIBERTY_STYLE_URL;
 }
 
 /**
@@ -433,6 +496,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
       searchQuery,
       biosecurityRadius,
       mapStyleMode,
+      onSelectMapStyle,
       timeOfDay,
       liteMode,
       onSatelliteFallbackToStreet,
@@ -450,6 +514,9 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
 
     const esriMaxZoomRef = useRef<number>(18);
     const tileErrorTimestampsRef = useRef<number[]>([]);
+    const streetFallbackToOsmRef = useRef<boolean>(false);
+    const streetErrorTimestampsRef = useRef<number[]>([]);
+    const [usingOsmFallback, setUsingOsmFallback] = useState<boolean>(false);
 
     const [currentZoom, setCurrentZoom] = useState(6.2);
     const [hoveredId, setHoveredId] = useState<string | null>(null);
@@ -1714,14 +1781,15 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
       [applyLayerFiltersAndStyles, buildFarmsSourceGeoJSON]
     );
 
-    // Khởi tạo Bản đồ 2D nhẹ (MapLibre GL với pitch: 0, mặc định nền OpenStreetMap gốc)
+    // Khởi tạo Bản đồ 2D (MapLibre GL — mặc định OpenFreeMap Liberty giống Google My Maps, có chuyển Địa hình & Vệ tinh)
     useEffect(() => {
       if (!mapContainerRef.current || mapRef.current) return;
 
-      const initialStyle =
-        mapStyleMode === 'satellite'
-          ? createSatelliteBaseStyle(esriMaxZoomRef.current)
-          : create2DStreetBaseStyle();
+      const initialStyle = getBasemapStyle(
+        mapStyleMode,
+        streetFallbackToOsmRef.current,
+        esriMaxZoomRef.current
+      );
 
       const { center, zoom } = getSystemCenterAndZoom(farms, centralHub);
 
@@ -1755,19 +1823,75 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         }
       });
 
+      const activateOsmFallback = () => {
+        if (streetFallbackToOsmRef.current) return;
+        streetFallbackToOsmRef.current = true;
+        setUsingOsmFallback(true);
+        const savedCenter = map.getCenter();
+        const savedZoom = map.getZoom();
+        map.setStyle(createOsmFallbackStyle());
+        map.once('style.load', () => {
+          registerMapLibreFarmIcons(map);
+          map.jumpTo({
+            center: savedCenter,
+            zoom: savedZoom,
+            pitch: 0,
+            bearing: 0,
+          });
+          setupCustomLayers(map);
+        });
+      };
+
       map.on(
         'error',
         (errEvent: maplibregl.ErrorEvent & { sourceId?: string }) => {
-          if (currentStyleModeRef.current !== 'satellite') return;
           const sourceId = errEvent?.sourceId || '';
           const errMsg = String(errEvent?.error?.message || '').toLowerCase();
-          const isSatelliteTileError =
+
+          // 1. Nếu OpenFreeMap Liberty tải lỗi -> tự động quay về OpenStreetMap gốc (không API Key)
+          if (
+            currentStyleModeRef.current === 'street' &&
+            !streetFallbackToOsmRef.current
+          ) {
+            const isStreetStyleError =
+              errMsg.includes('openfreemap') ||
+              errMsg.includes('style') ||
+              errMsg.includes('failed to fetch') ||
+              sourceId === 'openmaptiles';
+
+            if (isStreetStyleError) {
+              const now = Date.now();
+              const recent = streetErrorTimestampsRef.current.filter(
+                (ts) => now - ts <= 10_000
+              );
+              recent.push(now);
+              streetErrorTimestampsRef.current = recent;
+
+              if (recent.length >= 2 || errMsg.includes('failed to fetch')) {
+                streetErrorTimestampsRef.current = [];
+                activateOsmFallback();
+              }
+            }
+            return;
+          }
+
+          // 2. Nếu lớp Địa hình hoặc Vệ tinh Esri tải lỗi -> tự động quay về Bản đồ đường mặc định
+          if (
+            currentStyleModeRef.current !== 'satellite' &&
+            currentStyleModeRef.current !== 'terrain'
+          ) {
+            return;
+          }
+
+          const isEsriTileError =
             sourceId === 'esri-world-imagery' ||
+            sourceId === 'esri-world-topo' ||
             errMsg.includes('arcgisonline') ||
             errMsg.includes('world_imagery') ||
+            errMsg.includes('world_topo') ||
             errMsg.includes('tile');
 
-          if (!isSatelliteTileError) return;
+          if (!isEsriTileError) return;
 
           const now = Date.now();
           const recent = tileErrorTimestampsRef.current.filter(
@@ -1897,8 +2021,6 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         setCurrentZoom(map.getZoom());
       });
 
-      registerMapLibreFarmIcons(map);
-
       map.on('load', () => {
         isMapLoadedRef.current = true;
         setupCustomLayers(map);
@@ -1942,7 +2064,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
       }
     }, [stage]);
 
-    // Chuyển đổi nền Đường phố 2D nhẹ ↔ Vệ tinh khi người dùng chủ động bấm trong Tùy chỉnh
+    // Chuyển đổi 3 lớp nền Bản đồ đường | Địa hình | Vệ tinh
     const currentStyleModeRef = useRef<MapStyleMode>(mapStyleMode);
     useEffect(() => {
       const map = mapRef.current;
@@ -1955,10 +2077,11 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
       const savedCenter = map.getCenter();
       const savedZoom = map.getZoom();
 
-      const nextStyle =
-        mapStyleMode === 'satellite'
-          ? createSatelliteBaseStyle(esriMaxZoomRef.current)
-          : create2DStreetBaseStyle();
+      const nextStyle = getBasemapStyle(
+        mapStyleMode,
+        streetFallbackToOsmRef.current,
+        esriMaxZoomRef.current
+      );
 
       map.setStyle(nextStyle);
 
@@ -2409,15 +2532,65 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
           </div>
         )}
 
-        {/* Lớp phủ sắc thái ánh sáng môi trường theo 4 mốc giờ */}
-        <div
-          className="pointer-events-none fixed inset-0 z-10 transition-colors duration-1000"
-          style={{ backgroundColor: currentPreset.ambientTint }}
-          aria-hidden="true"
-        />
+        {/* Lớp phủ ánh sáng & mây CHỈ áp dụng cho Quả địa cầu 3D — tuyệt đối KHÔNG phủ mờ đè lên nền Bản đồ 2D */}
+        {stage === 'globe' && (
+          <>
+            <div
+              className="pointer-events-none fixed inset-0 z-10 transition-colors duration-1000"
+              style={{ backgroundColor: currentPreset.ambientTint }}
+              aria-hidden="true"
+            />
+            <AtmosphericCloudsOverlay zoom={currentZoom} liteMode={liteMode} />
+          </>
+        )}
 
-        {/* Lớp Mây trắng mờ SVG nhẹ phía trên */}
-        <AtmosphericCloudsOverlay zoom={currentZoom} liteMode={liteMode} />
+        {/* Thanh chuyển nhanh 3 lớp nền trực tiếp trên Bản đồ 2D: Bản đồ đường | Địa hình | Vệ tinh */}
+        {stage === 'map' && onSelectMapStyle && (
+          <div
+            className={`pointer-events-auto fixed left-2.5 bottom-[118px] z-20 items-center gap-0.5 rounded-full border border-white/95 bg-white/92 p-1 shadow-[0_8px_24px_rgba(15,42,36,0.16)] backdrop-blur-xl sm:bottom-[34px] ${
+              selectedFarm || isHubSelected ? 'hidden sm:flex' : 'flex'
+            }`}
+            role="group"
+            aria-label="Chọn lớp nền bản đồ"
+          >
+            {(
+              [
+                {
+                  key: 'street' as MapStyleMode,
+                  label: 'Bản đồ đường',
+                  icon: <MapIcon className="h-3.5 w-3.5" />,
+                },
+                {
+                  key: 'terrain' as MapStyleMode,
+                  label: 'Địa hình',
+                  icon: <Mountain className="h-3.5 w-3.5" />,
+                },
+                {
+                  key: 'satellite' as MapStyleMode,
+                  label: 'Vệ tinh',
+                  icon: <Satellite className="h-3.5 w-3.5" />,
+                },
+              ] as const
+            ).map((opt) => {
+              const active = mapStyleMode === opt.key;
+              return (
+                <button
+                  key={opt.key}
+                  type="button"
+                  onClick={() => onSelectMapStyle(opt.key)}
+                  className={`flex min-h-[32px] items-center gap-1.5 rounded-full px-3 py-1 text-[11px] font-extrabold transition-all cursor-pointer ${
+                    active
+                      ? 'bg-[#2b8fd0] text-white shadow-xs'
+                      : 'text-[#0f2a24]/75 hover:bg-emerald-950/5 hover:text-[#0f2a24]'
+                  }`}
+                >
+                  {opt.icon}
+                  <span>{opt.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
 
         {/* Nút tròn nhỏ ở góc dưới khi đang ở Địa cầu 3D: "Xem bản đồ chi tiết" */}
         {stage === 'globe' && !selectedFarm && !isHubSelected && (
@@ -2446,14 +2619,18 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         {/* Ghi nguồn bản đồ ở góc trái dưới */}
         {stage === 'map' && (
           <div
-            className="pointer-events-none fixed left-2.5 z-10 max-w-[68vw] truncate rounded-full border border-white/80 bg-white/80 px-2.5 py-0.5 text-[9px] font-semibold text-[#0f2a24] shadow-xs backdrop-blur-md sm:max-w-md sm:px-3 sm:py-1 sm:text-[10px]"
+            className="pointer-events-none fixed left-2.5 z-10 max-w-[68vw] truncate rounded-full border border-white/80 bg-white/85 px-2.5 py-0.5 text-[9px] font-semibold text-[#0f2a24] shadow-xs backdrop-blur-md sm:max-w-md sm:px-3 sm:py-1 sm:text-[10px]"
             style={{
               bottom: 'calc(var(--safe-bottom) + 6px)',
             }}
           >
             {mapStyleMode === 'satellite'
-              ? 'Nguồn ảnh vệ tinh: Tiles © Esri — Source: Esri, USDA, USGS, GeoEye, IGN & GIS Community'
-              : 'Bản đồ hành chính 2D: © OpenStreetMap contributors'}
+              ? 'Nguồn ảnh vệ tinh: Tiles © Esri — Esri, USDA, USGS, GeoEye, IGN & GIS Community'
+              : mapStyleMode === 'terrain'
+              ? 'Bản đồ địa hình: Tiles © Esri World Topo — OpenStreetMap & GIS Community'
+              : usingOsmFallback
+              ? 'Bản đồ đường: © OpenStreetMap contributors'
+              : 'Bản đồ đường: © OpenFreeMap · © OpenMapTiles · © OpenStreetMap contributors'}
           </div>
         )}
       </div>

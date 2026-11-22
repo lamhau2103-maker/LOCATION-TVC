@@ -19,7 +19,7 @@ export type FarmStatus = 'active' | 'warning' | 'isolated';
 
 export type AppStage = 'loading' | 'globe' | 'map';
 
-export type MapStyleMode = 'satellite' | 'street';
+export type MapStyleMode = 'street' | 'terrain' | 'satellite';
 
 export type TimeOfDay = 'dawn' | 'day' | 'dusk' | 'night';
 

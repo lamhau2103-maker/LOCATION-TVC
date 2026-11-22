@@ -15,6 +15,7 @@ import {
   LogOut,
   Map,
   Moon,
+  Mountain,
   Radar,
   RefreshCw,
   RotateCcw,
@@ -69,7 +70,7 @@ interface TopControlHUDProps {
   onRadiusChange: (r: number) => void;
   onResetToInitial: () => void;
   mapStyleMode: MapStyleMode;
-  onToggleMapStyle: () => void;
+  onSelectMapStyle: (mode: MapStyleMode) => void;
   timeOfDay: TimeOfDay;
   isAutoTime: boolean;
   onSelectTimeOfDay: (t: TimeOfDay) => void;
@@ -121,7 +122,7 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
   onRadiusChange,
   onResetToInitial,
   mapStyleMode,
-  onToggleMapStyle,
+  onSelectMapStyle,
   timeOfDay,
   isAutoTime,
   onSelectTimeOfDay,
@@ -574,36 +575,45 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
           )}
         </div>
 
-        {/* Segmented Nền bản đồ: Vệ tinh / Đường phố */}
-        <div className="grid grid-cols-2 gap-1 rounded-xl border border-emerald-950/10 bg-emerald-950/[0.04] p-1">
+        {/* Segmented Nền bản đồ: Bản đồ đường | Địa hình | Vệ tinh */}
+        <div className="grid grid-cols-3 gap-1 rounded-xl border border-emerald-950/10 bg-emerald-950/[0.04] p-1">
           <button
             type="button"
-            onClick={() => {
-              if (mapStyleMode !== 'satellite') onToggleMapStyle();
-            }}
-            className={`flex min-h-[38px] items-center justify-center gap-1.5 rounded-lg py-1.5 text-xs font-extrabold transition-all cursor-pointer ${
-              mapStyleMode === 'satellite'
-                ? 'bg-white text-[#2b8fd0] shadow-xs'
-                : 'text-[#0f2a24]/70 hover:text-[#0f2a24]'
-            }`}
-          >
-            <Satellite className="h-3.5 w-3.5" />
-            <span>Vệ tinh</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              if (mapStyleMode !== 'street') onToggleMapStyle();
-            }}
-            className={`flex min-h-[38px] items-center justify-center gap-1.5 rounded-lg py-1.5 text-xs font-extrabold transition-all cursor-pointer ${
+            onClick={() => onSelectMapStyle('street')}
+            className={`flex min-h-[38px] items-center justify-center gap-1 rounded-lg px-1.5 py-1.5 text-[11px] font-extrabold transition-all cursor-pointer ${
               mapStyleMode === 'street'
                 ? 'bg-white text-[#10b981] shadow-xs'
                 : 'text-[#0f2a24]/70 hover:text-[#0f2a24]'
             }`}
           >
-            <Map className="h-3.5 w-3.5" />
-            <span>Đường phố</span>
+            <Map className="h-3.5 w-3.5 shrink-0" />
+            <span>Đường</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => onSelectMapStyle('terrain')}
+            className={`flex min-h-[38px] items-center justify-center gap-1 rounded-lg px-1.5 py-1.5 text-[11px] font-extrabold transition-all cursor-pointer ${
+              mapStyleMode === 'terrain'
+                ? 'bg-white text-[#059669] shadow-xs'
+                : 'text-[#0f2a24]/70 hover:text-[#0f2a24]'
+            }`}
+          >
+            <Mountain className="h-3.5 w-3.5 shrink-0" />
+            <span>Địa hình</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => onSelectMapStyle('satellite')}
+            className={`flex min-h-[38px] items-center justify-center gap-1 rounded-lg px-1.5 py-1.5 text-[11px] font-extrabold transition-all cursor-pointer ${
+              mapStyleMode === 'satellite'
+                ? 'bg-white text-[#2b8fd0] shadow-xs'
+                : 'text-[#0f2a24]/70 hover:text-[#0f2a24]'
+            }`}
+          >
+            <Satellite className="h-3.5 w-3.5 shrink-0" />
+            <span>Vệ tinh</span>
           </button>
         </div>
 

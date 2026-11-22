@@ -1461,17 +1461,22 @@ export default function App() {
     }
   };
 
-  const handleToggleMapStyle = () => {
-    setMapStyleMode((prev) => {
-      const next = prev === 'satellite' ? 'street' : 'satellite';
-      showToast(
-        next === 'satellite'
-          ? 'Đã chuyển sang nền Ảnh Vệ Tinh (Esri World Imagery)'
-          : 'Đã chuyển sang nền Bản đồ Đường phố 2D (OpenStreetMap)'
-      );
-      return next;
-    });
-  };
+  const handleSelectMapStyle = useCallback(
+    (next: MapStyleMode) => {
+      setMapStyleMode((prev) => {
+        if (prev === next) return prev;
+        const label =
+          next === 'satellite'
+            ? 'Ảnh Vệ tinh (Esri World Imagery)'
+            : next === 'terrain'
+            ? 'Bản đồ Địa hình (Esri World Topo)'
+            : 'Bản đồ đường (OpenFreeMap Liberty)';
+        showToast(`Đã chuyển sang ${label}`);
+        return next;
+      });
+    },
+    [showToast]
+  );
 
   const handleSelectTimeOfDay = (t: TimeOfDay) => {
     setIsAutoTime(false);
@@ -1548,13 +1553,14 @@ export default function App() {
         searchQuery={searchQuery}
         biosecurityRadius={biosecurityRadius}
         mapStyleMode={mapStyleMode}
+        onSelectMapStyle={handleSelectMapStyle}
         timeOfDay={timeOfDay}
         liteMode={liteMode}
         onSatelliteFallbackToStreet={() => {
           setMapStyleMode((prev) => {
             if (prev === 'street') return prev;
             showToast(
-              'Ảnh vệ tinh khu vực này chưa đầy đủ, đã chuyển sang bản đồ đường phố'
+              'Lớp nền khu vực này tạm thời tải lỗi, đã tự động chuyển về Bản đồ đường'
             );
             return 'street';
           });
@@ -1592,7 +1598,7 @@ export default function App() {
             onRadiusChange={setBiosecurityRadius}
             onResetToInitial={handleResetToInitialView}
             mapStyleMode={mapStyleMode}
-            onToggleMapStyle={handleToggleMapStyle}
+            onSelectMapStyle={handleSelectMapStyle}
             timeOfDay={timeOfDay}
             isAutoTime={isAutoTime}
             onSelectTimeOfDay={handleSelectTimeOfDay}
