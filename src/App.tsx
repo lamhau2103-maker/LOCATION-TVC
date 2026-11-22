@@ -1467,7 +1467,7 @@ export default function App() {
       showToast(
         next === 'satellite'
           ? 'Đã chuyển sang nền Ảnh Vệ Tinh (Esri World Imagery)'
-          : 'Đã chuyển sang nền Bản đồ Đường phố 2D (CARTO Voyager / OpenStreetMap)'
+          : 'Đã chuyển sang nền Bản đồ Đường phố 2D (OpenStreetMap)'
       );
       return next;
     });

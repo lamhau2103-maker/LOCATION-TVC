@@ -76,12 +76,6 @@ interface MapSceneProps {
   onSatelliteFallbackToStreet?: () => void;
 }
 
-const CARTO_VOYAGER_TILES = [
-  'https://a.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}@2x.png',
-  'https://b.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}@2x.png',
-  'https://c.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}@2x.png',
-];
-
 const OSM_STANDARD_TILES = ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'];
 
 const ESRI_SATELLITE_TILES =
@@ -177,30 +171,20 @@ function computeCameraPadding(
 }
 
 /**
- * Nền Bản đồ 2D Đường phố / Hành chính miễn phí 100%, không cần API Key:
- * - Mặc định dùng CartoDB Voyager (@2x sắc nét, rõ tên địa danh Việt Nam)
- * - Tự động chuyển dự phòng sang OpenStreetMap chuẩn nếu CartoDB lỗi tải tile
+ * Nền Bản đồ 2D Đường phố / Hành chính OpenStreetMap gốc (miễn phí 100%, không giới hạn domain, không cần API Key)
  */
-function create2DStreetBaseStyle(
-  useOsmFallback = false
-): maplibregl.StyleSpecification {
-  const sourceId = useOsmFallback ? 'osm-standard' : 'carto-voyager';
-  const layerId = useOsmFallback ? 'osm-standard-base' : 'carto-voyager-base';
+function create2DStreetBaseStyle(): maplibregl.StyleSpecification {
   return {
     version: 8,
-    name: useOsmFallback
-      ? 'ThaiViet 2D OpenStreetMap'
-      : 'ThaiViet 2D Street Voyager',
+    name: 'ThaiViet 2D OpenStreetMap',
     glyphs: 'https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf',
     sources: {
-      [sourceId]: {
+      'osm-standard': {
         type: 'raster',
-        tiles: useOsmFallback ? OSM_STANDARD_TILES : CARTO_VOYAGER_TILES,
+        tiles: OSM_STANDARD_TILES,
         tileSize: 256,
         maxzoom: 19,
-        attribution: useOsmFallback
-          ? '© OpenStreetMap contributors'
-          : '© OpenStreetMap contributors © CARTO',
+        attribution: '© OpenStreetMap contributors',
       },
     },
     layers: [
@@ -212,9 +196,9 @@ function create2DStreetBaseStyle(
         },
       },
       {
-        id: layerId,
+        id: 'osm-standard-base',
         type: 'raster',
-        source: sourceId,
+        source: 'osm-standard',
         paint: {
           'raster-opacity': 1,
           'raster-fade-duration': 0,
@@ -466,9 +450,6 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
 
     const esriMaxZoomRef = useRef<number>(18);
     const tileErrorTimestampsRef = useRef<number[]>([]);
-    const streetFallbackToOsmRef = useRef<boolean>(false);
-    const streetTileErrorTimestampsRef = useRef<number[]>([]);
-    const [usingOsmFallback, setUsingOsmFallback] = useState<boolean>(false);
 
     const [currentZoom, setCurrentZoom] = useState(6.2);
     const [hoveredId, setHoveredId] = useState<string | null>(null);
@@ -1105,7 +1086,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
     }, [stage, selectedFarm, isHubSelected]);
 
     // =========================================================================
-    // 2. BẢN ĐỒ PHẲNG 2D NHẸ (MAPLIBRE GL — PITCH: 0, CARTO VOYAGER / OSM STYLE)
+    // 2. BẢN ĐỒ PHẲNG 2D NHẸ (MAPLIBRE GL — PITCH: 0, OPENSTREETMAP GỐC)
     // =========================================================================
     const buildFarmsSourceGeoJSON = useCallback(
       (
@@ -1733,14 +1714,14 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
       [applyLayerFiltersAndStyles, buildFarmsSourceGeoJSON]
     );
 
-    // Khởi tạo Bản đồ 2D nhẹ (MapLibre GL với pitch: 0, mặc định nền đường phố Carto Voyager)
+    // Khởi tạo Bản đồ 2D nhẹ (MapLibre GL với pitch: 0, mặc định nền OpenStreetMap gốc)
     useEffect(() => {
       if (!mapContainerRef.current || mapRef.current) return;
 
       const initialStyle =
         mapStyleMode === 'satellite'
           ? createSatelliteBaseStyle(esriMaxZoomRef.current)
-          : create2DStreetBaseStyle(streetFallbackToOsmRef.current);
+          : create2DStreetBaseStyle();
 
       const { center, zoom } = getSystemCenterAndZoom(farms, centralHub);
 
@@ -1774,101 +1755,12 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         }
       });
 
-      const switchStreetToOsmFallback = () => {
-        if (streetFallbackToOsmRef.current) return;
-        streetFallbackToOsmRef.current = true;
-        setUsingOsmFallback(true);
-        try {
-          const beforeLayerId = map.getLayer('biosecurity-outer-glow')
-            ? 'biosecurity-outer-glow'
-            : undefined;
-          if (map.getLayer('carto-voyager-base')) {
-            map.removeLayer('carto-voyager-base');
-          }
-          if (map.getSource('carto-voyager')) {
-            map.removeSource('carto-voyager');
-          }
-          if (!map.getSource('osm-standard')) {
-            map.addSource('osm-standard', {
-              type: 'raster',
-              tiles: OSM_STANDARD_TILES,
-              tileSize: 256,
-              maxzoom: 19,
-              attribution: '© OpenStreetMap contributors',
-            });
-          }
-          if (!map.getLayer('osm-standard-base')) {
-            map.addLayer(
-              {
-                id: 'osm-standard-base',
-                type: 'raster',
-                source: 'osm-standard',
-                paint: {
-                  'raster-opacity': 1,
-                  'raster-fade-duration': 0,
-                },
-              },
-              beforeLayerId
-            );
-          }
-        } catch {
-          // Dự phòng nạp lại style OSM đầy đủ nếu map chưa kịp sẵn sàng
-          const savedCenter = map.getCenter();
-          const savedZoom = map.getZoom();
-          map.setStyle(create2DStreetBaseStyle(true));
-          map.once('style.load', () => {
-            registerMapLibreFarmIcons(map);
-            map.jumpTo({
-              center: savedCenter,
-              zoom: savedZoom,
-              pitch: 0,
-              bearing: 0,
-            });
-            setupCustomLayers(map);
-          });
-        }
-      };
-
       map.on(
         'error',
         (errEvent: maplibregl.ErrorEvent & { sourceId?: string }) => {
+          if (currentStyleModeRef.current !== 'satellite') return;
           const sourceId = errEvent?.sourceId || '';
           const errMsg = String(errEvent?.error?.message || '').toLowerCase();
-
-          // 1. Tự động chuyển dự phòng từ CartoDB Voyager sang OpenStreetMap chuẩn nếu lỗi tải tile
-          if (
-            currentStyleModeRef.current === 'street' &&
-            !streetFallbackToOsmRef.current
-          ) {
-            const isCartoTileError =
-              sourceId === 'carto-voyager' ||
-              errMsg.includes('cartocdn') ||
-              errMsg.includes('carto') ||
-              (sourceId === '' && errMsg.includes('tile'));
-
-            if (isCartoTileError) {
-              const now = Date.now();
-              const recent = streetTileErrorTimestampsRef.current.filter(
-                (ts) => now - ts <= 10_000
-              );
-              recent.push(now);
-              streetTileErrorTimestampsRef.current = recent;
-
-              if (
-                recent.length >= 2 ||
-                errMsg.includes('401') ||
-                errMsg.includes('403') ||
-                errMsg.includes('429')
-              ) {
-                streetTileErrorTimestampsRef.current = [];
-                switchStreetToOsmFallback();
-              }
-            }
-            return;
-          }
-
-          // 2. Xử lý lỗi tile khi đang ở chế độ Vệ tinh Esri World Imagery
-          if (currentStyleModeRef.current !== 'satellite') return;
           const isSatelliteTileError =
             sourceId === 'esri-world-imagery' ||
             errMsg.includes('arcgisonline') ||
@@ -2066,7 +1958,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
       const nextStyle =
         mapStyleMode === 'satellite'
           ? createSatelliteBaseStyle(esriMaxZoomRef.current)
-          : create2DStreetBaseStyle(streetFallbackToOsmRef.current);
+          : create2DStreetBaseStyle();
 
       map.setStyle(nextStyle);
 
@@ -2489,7 +2381,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
           }`}
         />
 
-        {/* 2. BẢN ĐỒ 2D PHẲNG NHẸ (MapLibre GL — Mặc định nền Đường phố/Hành chính Carto Voyager, pitch: 0) */}
+        {/* 2. BẢN ĐỒ 2D PHẲNG NHẸ (MapLibre GL — Mặc định nền OpenStreetMap gốc, pitch: 0) */}
         <div
           ref={mapContainerRef}
           className={`fixed inset-0 z-10 transition-opacity duration-500 ${
@@ -2561,9 +2453,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
           >
             {mapStyleMode === 'satellite'
               ? 'Nguồn ảnh vệ tinh: Tiles © Esri — Source: Esri, USDA, USGS, GeoEye, IGN & GIS Community'
-              : usingOsmFallback
-              ? 'Bản đồ hành chính 2D: © OpenStreetMap contributors'
-              : 'Bản đồ hành chính 2D: © OpenStreetMap contributors © CARTO'}
+              : 'Bản đồ hành chính 2D: © OpenStreetMap contributors'}
           </div>
         )}
       </div>
