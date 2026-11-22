@@ -542,9 +542,8 @@ export default function App() {
       : APP_CONFIG.defaultBiosecurityRadiusMeters
   );
 
-  const [mapStyleMode, setMapStyleMode] = useState<MapStyleMode>(() =>
-    savedUserPrefs.mapStyleMode === 'street' ? 'street' : 'satellite'
-  );
+  // Mặc định nền Bản đồ 2D là Bản đồ Đường phố / Hành chính phẳng ('street' - nhẹ, load tức thì, không tải ảnh vệ tinh nặng trừ khi người dùng chủ động bật)
+  const [mapStyleMode, setMapStyleMode] = useState<MapStyleMode>('street');
   const [timeOfDay, setTimeOfDay] = useState<TimeOfDay>(() =>
     savedUserPrefs.timeOfDay &&
     savedUserPrefs.timeOfDay in APP_CONFIG.timePresets
@@ -1167,10 +1166,9 @@ export default function App() {
   /**
    * Nút "Trở về ban đầu":
    * 1. Đóng toàn bộ card thông tin trang trại/nhà máy đang mở và xóa text trong ô chọn điểm.
-   * 2. Tắt trạng thái chọn Nhà máy trung tâm (tắt các đường cung & chấm sáng độ phủ nếu đang bật).
+   * 2. Tắt trạng thái chọn Nhà máy trung tâm (tắt các đường cung & đốm sáng độ phủ nếu đang bật).
    * 3. Bật lại cả 3 chip lọc (Trại gà = true, Trại heo = true, Khác = true) để hiển thị đầy đủ tất cả các điểm.
-   * 4. Đưa camera bay mượt mà về góc nhìn tổng quan ban đầu (trên Địa cầu 3D: hướng về khu vực Việt Nam / Đông Nam Á;
-   *    trên Bản đồ chi tiết: flyTo về góc nhìn bao quát toàn bộ các trang trại và nhà máy trung tâm với pitch: 0, bearing: 0, padding: 0).
+   * 4. Đưa người dùng quay lại góc nhìn Quả địa cầu 3D ban đầu (stage = 'globe') hướng về khu vực Việt Nam / Đông Nam Á.
    */
   const handleResetToInitialView = useCallback(() => {
     setSelectedFarmId(null);
@@ -1182,9 +1180,10 @@ export default function App() {
       pig: true,
       other: true,
     });
+    setStage('globe');
     soundEngine.playWhoosh(soundEnabled, 1.5);
-    mapSceneRef.current?.resetToInitialView(stage);
-  }, [soundEnabled, stage]);
+    mapSceneRef.current?.resetToInitialView('globe');
+  }, [soundEnabled]);
 
   // Nhấn phím Esc để đóng card thông tin / bỏ chọn Nhà máy trung tâm và thu hồi đường kết nối
   useEffect(() => {
@@ -1212,14 +1211,13 @@ export default function App() {
 
   // Cách vào bản đồ (e): Bấm nút tròn nhỏ "Xem bản đồ chi tiết" ở góc dưới địa cầu hoặc nút la bàn
   const handleEnterMapOverview = useCallback(() => {
-    const isFromGlobe = stage === 'globe';
     setSelectedFarmId(null);
     setIsHubSelected(false);
     setSingleArcFarmId(null);
     setStage('map');
-    soundEngine.playWhoosh(soundEnabled, 2.2);
-    mapSceneRef.current?.flyToOverview(5000, isFromGlobe ? 65 : 60);
-  }, [soundEnabled, stage]);
+    soundEngine.playWhoosh(soundEnabled, 1.8);
+    mapSceneRef.current?.flyToOverview(1800, 0);
+  }, [soundEnabled]);
 
   // Cách vào bản đồ (a): Bấm vào một điểm trang trại trên địa cầu (hoặc trên bản đồ) -> bay tới và mở card
   const handleSelectFarm = useCallback(
