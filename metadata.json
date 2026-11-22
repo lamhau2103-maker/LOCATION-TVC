@@ -1,0 +1,6 @@
+{
+  "name": "BioSphere AgriTech - Hệ Thống Trang Trại 3D",
+  "description": "Hệ thống trình diễn và giám sát mạng lưới trang trại chăn nuôi công nghệ cao trên địa cầu 3D và bản đồ không gian sci-fi.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

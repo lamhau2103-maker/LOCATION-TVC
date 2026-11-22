@@ -1,0 +1,318 @@
+@import "tailwindcss";
+@import "maplibre-gl/dist/maplibre-gl.css";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-display: "Be Vietnam Pro", sans-serif;
+  --font-sans: "Be Vietnam Pro", sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+}
+
+:root {
+  --brand-blue: #2b8fd0;
+  --brand-red: #d9261c;
+  --text-primary: #0f2a24;
+  --accent-emerald: #10b981;
+  --accent-sky: #0ea5e9;
+  --accent-yellow: #facc15;
+  --accent-coral: #fb7185;
+  --accent-orange: #fb923c;
+  --accent-teal: #14b8a6;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: #e6f4f1;
+  color: #0f2a24;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  user-select: none;
+}
+
+.font-display {
+  font-family: var(--font-display);
+}
+
+.font-mono-tabular {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Phong cách kính trắng mờ tươi sáng (Glassmorphism) */
+.glass-panel {
+  background: rgba(255, 255, 255, 0.76);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.88);
+  color: #0f2a24;
+  box-shadow:
+    0 12px 32px -6px rgba(15, 42, 36, 0.13),
+    0 4px 12px -2px rgba(43, 143, 208, 0.08),
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.92);
+}
+
+/* Khung kính trắng mờ bo tròn dành riêng cho Logo trên nền tối/địa cầu */
+.logo-glass-badge {
+  background: rgba(255, 255, 255, 0.88);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-radius: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.95);
+  box-shadow:
+    0 10px 28px -4px rgba(15, 42, 36, 0.18),
+    0 0 0 1px rgba(43, 143, 208, 0.12);
+}
+
+/* Hiệu ứng Ghim Nổi 3D có bóng mềm dưới đất & nhấp nhô nhẹ lên xuống */
+@keyframes pin-float {
+  0%, 100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
+}
+
+@keyframes pin-shadow-breath {
+  0%, 100% {
+    transform: translate(-50%, 0) scale(1);
+    opacity: 0.36;
+  }
+  50% {
+    transform: translate(-50%, 0) scale(0.75);
+    opacity: 0.2;
+  }
+}
+
+@keyframes marker-match-bounce {
+  0%, 100% {
+    transform: scale(1.24) translateY(0);
+  }
+  50% {
+    transform: scale(1.36) translateY(-8px);
+  }
+}
+
+@keyframes sync-pop-in {
+  0% {
+    transform: scale(0.3);
+    filter: brightness(2);
+  }
+  60% {
+    transform: scale(1.45);
+    filter: brightness(1.4);
+  }
+  100% {
+    transform: scale(1);
+    filter: brightness(1);
+  }
+}
+
+@keyframes hub-sonar-wave {
+  0% {
+    transform: translate(-50%, -50%) scale(0.65);
+    opacity: 0.9;
+  }
+  100% {
+    transform: translate(-50%, -50%) scale(2.45);
+    opacity: 0;
+  }
+}
+
+@keyframes cloud-drift {
+  0% {
+    transform: translate3d(-12%, 0, 0);
+  }
+  50% {
+    transform: translate3d(12%, -2%, 0);
+  }
+  100% {
+    transform: translate3d(-12%, 0, 0);
+  }
+}
+
+.farm-pin-marker {
+  position: relative;
+  width: 44px;
+  height: 52px;
+  cursor: pointer;
+  pointer-events: auto;
+  transition:
+    opacity 0.45s cubic-bezier(0.16, 1, 0.3, 1),
+    transform 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.farm-pin-marker:hover {
+  transform: scale(1.22) translateY(-3px);
+  z-index: 45 !important;
+}
+
+.farm-pin-marker.is-dimmed {
+  opacity: 0.22 !important;
+  filter: saturate(0.4);
+}
+
+.farm-pin-marker.is-matched {
+  animation: marker-match-bounce 1s ease-in-out infinite;
+  z-index: 55 !important;
+}
+
+.farm-pin-marker.is-selected {
+  transform: scale(1.32) translateY(-4px);
+  z-index: 60 !important;
+}
+
+.farm-pin-marker.is-newly-synced .farm-pin-body {
+  animation: sync-pop-in 0.9s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.farm-pin-marker.is-removing {
+  opacity: 0 !important;
+  transform: scale(0.4) !important;
+  pointer-events: none;
+}
+
+/* Khi zoom sát vào chuồng 3D (zoom >= 14.5), marker ghim mờ dần nhẹ nhàng */
+.farm-pin-marker.is-3d-fade {
+  opacity: 0.15;
+  transform: scale(0.78);
+}
+.farm-pin-marker.is-3d-fade:hover {
+  opacity: 1;
+  transform: scale(1.15);
+}
+
+.farm-pin-body {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  animation: pin-float var(--pulse-duration, 2.5s) ease-in-out infinite;
+}
+
+.farm-pin-head {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 9999px;
+  background: #ffffff;
+  border: 3px solid var(--marker-color, #10b981);
+  box-shadow:
+    0 6px 14px -2px rgba(15, 42, 36, 0.28),
+    0 0 0 3px rgba(255, 255, 255, 0.85);
+  color: var(--marker-color, #10b981);
+}
+
+.farm-pin-tip {
+  width: 0;
+  height: 0;
+  margin-top: -2px;
+  border-left: 6px solid transparent;
+  border-right: 6px solid transparent;
+  border-top: 8px solid var(--marker-color, #10b981);
+}
+
+.farm-pin-shadow {
+  position: absolute;
+  bottom: 2px;
+  left: 50%;
+  width: 20px;
+  height: 6px;
+  border-radius: 9999px;
+  background: rgba(15, 42, 36, 0.48);
+  filter: blur(2px);
+  transform: translate(-50%, 0);
+  animation: pin-shadow-breath var(--pulse-duration, 2.5s) ease-in-out infinite;
+}
+
+/* Vòng sóng sonar nhấp nháy bên dưới theo màu của từng icon trang trại */
+.farm-sonar-ring {
+  position: absolute;
+  top: 17px;
+  left: 50%;
+  width: 34px;
+  height: 34px;
+  border-radius: 9999px;
+  border: 2px solid var(--marker-color, #10b981);
+  background: radial-gradient(
+    circle,
+    transparent 42%,
+    color-mix(in srgb, var(--marker-color, #10b981) 26%, transparent) 100%
+  );
+  transform: translate(-50%, -50%) scale(0.7);
+  animation: hub-sonar-wave var(--sonar-duration, 2.4s)
+    cubic-bezier(0.15, 0.8, 0.3, 1) infinite;
+  pointer-events: none;
+}
+
+.farm-pin-marker.is-icon-bouncing .farm-pin-body {
+  animation: sync-pop-in 0.85s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Marker Nhà Máy Trung Tâm với Biểu tượng Hoa Sen Thái Việt & Vòng Sóng Lan Toả */
+.hub-pin-marker {
+  position: relative;
+  width: 58px;
+  height: 64px;
+  cursor: pointer;
+  pointer-events: auto;
+  z-index: 42;
+}
+
+.hub-sonar-ring {
+  position: absolute;
+  top: 22px;
+  left: 50%;
+  width: 44px;
+  height: 44px;
+  border-radius: 9999px;
+  border: 2px solid #2b8fd0;
+  background: radial-gradient(circle, transparent 45%, rgba(43, 143, 208, 0.24) 100%);
+  transform: translate(-50%, -50%) scale(0.7);
+  animation: hub-sonar-wave 2.4s cubic-bezier(0.15, 0.8, 0.3, 1) infinite;
+  pointer-events: none;
+}
+
+.hub-sonar-ring-delay {
+  animation-delay: 1.2s;
+}
+
+/* Thanh cuộn sáng tinh gọn */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.3);
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(43, 143, 208, 0.35);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(43, 143, 208, 0.65);
+}
+
+/* Tinh chỉnh Attribution của MapLibre sang giao diện kính sáng */
+.maplibregl-ctrl-attrib {
+  background-color: rgba(255, 255, 255, 0.78) !important;
+  color: #0f2a24 !important;
+  font-size: 10px !important;
+  backdrop-filter: blur(10px);
+  border-radius: 8px !important;
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  padding: 2px 8px !important;
+  box-shadow: 0 4px 12px rgba(15, 42, 36, 0.1);
+}
+.maplibregl-ctrl-attrib a {
+  color: #2b8fd0 !important;
+  font-weight: 600;
+}

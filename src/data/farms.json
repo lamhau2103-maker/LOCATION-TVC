@@ -1,0 +1,87 @@
+[
+  {
+    "id": "farm-vn-01",
+    "name": "Tổ hợp Trại Gà Công Nghệ Cao Xuân Lộc",
+    "type": "Trại gà",
+    "category": "chicken",
+    "status": "active",
+    "lat": 10.9325,
+    "lng": 107.4152,
+    "description": "Trang trại gà đẻ trứng & gà giống khép kín ứng dụng cảm biến vi khí hậu IoT tự động. Hệ thống lọc khí áp suất dương đạt chuẩn GlobalG.A.P.",
+    "extendedData": {
+      "Quy mô đàn": "145.000 con",
+      "Diện tích": "18,5 ha",
+      "Chỉ số ATSH": "98/100",
+      "Quản lý trưởng": "KS. Nguyễn Hoàng Minh",
+      "Nhiệt độ chuồng": "25.4 °C"
+    }
+  },
+  {
+    "id": "farm-vn-02",
+    "name": "Trang Trại Heo Giống Hạt Nhân Định Quán",
+    "type": "Trại heo",
+    "category": "pig",
+    "status": "active",
+    "lat": 11.1984,
+    "lng": 107.3526,
+    "description": "Trung tâm nhân giống heo nái cụ kỵ (GGP) công nghệ Đan Mạch. Hệ thống cho ăn lỏng tự động bằng chip RFID và khử trùng 3 lớp.",
+    "extendedData": {
+      "Quy mô đàn": "24.000 heo nái & hậu bị",
+      "Diện tích": "32,0 ha",
+      "Chỉ số ATSH": "99/100",
+      "Quản lý trưởng": "ThS. Trần Quốc Bảo",
+      "Chu trình xử lý": "Biogas tuần hoàn tuần hoàn nước"
+    }
+  },
+  {
+    "id": "farm-vn-03",
+    "name": "Trại Heo Thương Phẩm Thông Minh Phú Giáo",
+    "type": "Trại heo",
+    "category": "pig",
+    "status": "warning",
+    "lat": 11.2865,
+    "lng": 106.7942,
+    "description": "Khu chăn nuôi heo thịt quy mô lớn kết nối trực tiếp với nhà máy chế biến trung tâm. Đang tăng cường giám sát vành đai khử trùng mùa mưa.",
+    "extendedData": {
+      "Quy mô đàn": "38.500 con",
+      "Diện tích": "27,4 ha",
+      "Chỉ số ATSH": "89/100 (Giám sát cao độ)",
+      "Quản lý trưởng": "KS. Lê Văn Hùng",
+      "Cảnh báo gần nhất": "Độ ẩm ngoài trời > 88%"
+    }
+  },
+  {
+    "id": "farm-vn-04",
+    "name": "Trang Trại Gà Lạnh Tự Động Châu Đức",
+    "type": "Trại gà",
+    "category": "chicken",
+    "status": "active",
+    "lat": 10.6548,
+    "lng": 107.2519,
+    "description": "Hệ thống 16 dãy chuồng lạnh khép kín tiêu chuẩn châu Âu, tự động thu gom trứng bằng băng chuyền quang học và đóng gói khử khuẩn UV.",
+    "extendedData": {
+      "Quy mô đàn": "210.000 con",
+      "Diện tích": "22,0 ha",
+      "Chỉ số ATSH": "97/100",
+      "Quản lý trưởng": "KS. Phạm Thu Hà",
+      "Sản lượng": "165.000 trứng/ngày"
+    }
+  },
+  {
+    "id": "farm-vn-05",
+    "name": "Khu Sinh Thái Bò Sữa & Nghiên Cứu Bảo Lộc",
+    "type": "Khác (Bò sữa & Thủy cầm)",
+    "category": "other",
+    "status": "active",
+    "lat": 11.5472,
+    "lng": 107.8075,
+    "description": "Tổ hợp chăn nuôi bò sữa A2 cao nguyên kết hợp trạm quan trắc sinh học và vùng đệm thảo dược hữu cơ tự nhiên.",
+    "extendedData": {
+      "Quy mô đàn": "6.800 bò sữa cao sản",
+      "Diện tích": "64,0 ha",
+      "Chỉ số ATSH": "99/100",
+      "Quản lý trưởng": "TS. Đặng Gia Huy",
+      "Độ cao địa hình": "820 m"
+    }
+  }
+]
