@@ -36,6 +36,7 @@ import { APP_CONFIG } from '../config';
 import {
   AppStage,
   CentralHub,
+  DrivingDistanceCache,
   Farm,
   FarmCategory,
   FarmCustomLabels,
@@ -43,7 +44,7 @@ import {
   SyncState,
   TimeOfDay,
 } from '../types';
-import { calculateDistanceKm } from '../utils/geo';
+import { isCacheEntryValid } from '../utils/routing';
 import {
   DropdownLocationItem,
   getLocationDisplayLabel,
@@ -92,6 +93,9 @@ interface TopControlHUDProps {
   onOpenBulkIconModal: () => void;
   onOpenPositionDiagnostics: () => void;
   hasActiveCard?: boolean;
+  drivingDistanceCache: DrivingDistanceCache;
+  isCalculatingDistances: boolean;
+  onRecalculateDistances: () => void;
 }
 
 /**
@@ -144,6 +148,9 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
   onOpenBulkIconModal,
   onOpenPositionDiagnostics,
   hasActiveCard = false,
+  drivingDistanceCache,
+  isCalculatingDistances,
+  onRecalculateDistances,
 }) => {
   const [logoError, setLogoError] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -177,16 +184,38 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
   const pigCount = farms.filter((f) => f.category === 'pig').length;
   const otherCount = farms.filter((f) => f.category === 'other').length;
 
-  const totalDistanceKm = centralHub
-    ? farms.reduce(
-        (acc, f) =>
-          f.isFeedMill || f.id === centralHub.id
-            ? acc
-            : acc +
-              calculateDistanceKm(centralHub.lat, centralHub.lng, f.lat, f.lng),
-        0
-      )
-    : 0;
+  const nonHubFarms = React.useMemo(
+    () =>
+      centralHub
+        ? farms.filter((f) => !f.isFeedMill && f.id !== centralHub.id)
+        : [],
+    [farms, centralHub]
+  );
+
+  const { totalDrivingDistanceKm, validDistanceCount } = React.useMemo(() => {
+    if (!centralHub) {
+      return { totalDrivingDistanceKm: 0, validDistanceCount: 0 };
+    }
+    let totalMeters = 0;
+    let validCount = 0;
+    const origin = { lat: centralHub.lat, lng: centralHub.lng };
+    for (const f of nonHubFarms) {
+      const entry = drivingDistanceCache[f.id];
+      if (
+        entry &&
+        entry.status === 'ok' &&
+        typeof entry.distanceMeters === 'number' &&
+        isCacheEntryValid(entry, origin, { lat: f.lat, lng: f.lng })
+      ) {
+        totalMeters += entry.distanceMeters;
+        validCount += 1;
+      }
+    }
+    return {
+      totalDrivingDistanceKm: totalMeters / 1000,
+      validDistanceCount: validCount,
+    };
+  }, [centralHub, nonHubFarms, drivingDistanceCache]);
 
   const isSyncNormal =
     Boolean(syncState.lastSyncedTime) && !syncState.isOfflineFallback;
@@ -612,6 +641,27 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
             className="h-1.5 w-full cursor-pointer appearance-none rounded-lg bg-emerald-950/15 accent-[#10b981]"
           />
         </div>
+
+        {/* Nút nhỏ tính lại quãng đường lái xe thực tế (OSRM) */}
+        {centralHub && (
+          <button
+            type="button"
+            disabled={isCalculatingDistances}
+            onClick={onRecalculateDistances}
+            className="flex min-h-[36px] w-full items-center justify-center gap-1.5 rounded-xl border border-[#2b8fd0]/25 bg-white/85 px-3 py-1.5 text-[11px] font-extrabold text-[#2b8fd0] transition-colors hover:border-[#2b8fd0] hover:bg-sky-50 disabled:opacity-60 cursor-pointer"
+          >
+            <RefreshCw
+              className={`h-3.5 w-3.5 shrink-0 ${
+                isCalculatingDistances ? 'animate-spin' : ''
+              }`}
+            />
+            <span>
+              {isCalculatingDistances
+                ? 'Đang tính lại quãng đường...'
+                : 'Tính lại quãng đường'}
+            </span>
+          </button>
+        )}
       </div>
 
       <div className="h-px bg-emerald-950/10" />
@@ -1328,11 +1378,21 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
                         Tổng khoảng cách
                       </div>
                       <div className="text-base font-extrabold text-[#2b8fd0]">
-                        <CountUp
-                          end={totalDistanceKm}
-                          decimals={1}
-                          suffix=" km"
-                        />
+                        {isCalculatingDistances ? (
+                          <span className="text-xs font-bold text-[#2b8fd0]/85">
+                            Đang tính...
+                          </span>
+                        ) : nonHubFarms.length > 0 && validDistanceCount === 0 ? (
+                          <span className="text-xs font-bold text-emerald-950/55">
+                            Chưa có dữ liệu
+                          </span>
+                        ) : (
+                          <CountUp
+                            end={totalDrivingDistanceKm}
+                            decimals={1}
+                            suffix=" km"
+                          />
+                        )}
                       </div>
                     </div>
                   </>

@@ -172,7 +172,19 @@ a,
 }
 
 .supply-arc-dash-path {
+  vector-effect: non-scaling-stroke;
+  will-change: stroke-dashoffset;
   animation: supply-arc-dash-flow 1.2s linear infinite;
+}
+
+.supply-arc-dash-path.is-arc-hidden {
+  opacity: 0 !important;
+  visibility: hidden;
+  animation-play-state: paused !important;
+}
+
+.is-zooming .supply-arc-dash-path {
+  animation-play-state: paused !important;
 }
 
 @keyframes farm-ripple-pulse {
@@ -195,6 +207,46 @@ a,
     transform: scale(1);
     opacity: 0;
   }
+}
+
+.farm-ripple-layer {
+  transition: opacity 0.1s ease-out;
+  will-change: opacity;
+}
+
+.farm-ripple-layer.is-zooming {
+  opacity: 0 !important;
+}
+
+.farm-ripple-layer.is-zooming .farm-ripple-ring {
+  animation-play-state: paused !important;
+}
+
+.farm-ripple-anchor {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  will-change: transform, opacity;
+}
+
+.farm-ripple-anchor.is-ripple-visible {
+  opacity: 1;
+  visibility: visible;
+}
+
+.farm-ripple-anchor.is-ripple-visible[data-dimmed='search'] {
+  opacity: 0.35;
+}
+
+.farm-ripple-anchor.is-ripple-visible[data-dimmed='hub'] {
+  opacity: 0.38;
+}
+
+.farm-ripple-anchor:not(.is-ripple-visible) .farm-ripple-ring {
+  animation-play-state: paused !important;
 }
 
 .farm-ripple-ring {
@@ -224,6 +276,15 @@ a,
 
 .farm-ripple-ring--other.farm-ripple-ring-delayed {
   animation-delay: -0.9s;
+}
+
+/* Giảm tải GPU compositor khi đang zoom bản đồ: tạm tắt backdrop-filter trên các lớp kính đè lên canvas */
+body.map-is-zooming .glass-panel,
+body.map-is-zooming .backdrop-blur-md,
+body.map-is-zooming .backdrop-blur-xl,
+body.map-is-zooming .backdrop-blur-2xl {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
 }
 
 /* Thanh cuộn sáng tinh gọn */

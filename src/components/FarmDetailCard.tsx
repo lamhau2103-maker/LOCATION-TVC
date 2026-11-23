@@ -29,12 +29,17 @@ import {
 import {
   ArcColorConfig,
   CentralHub,
+  DrivingDistanceCache,
   Farm,
   FarmCategory,
   FarmCustomLabels,
   IconChoice,
 } from '../types';
-import { calculateDistanceKm } from '../utils/geo';
+import {
+  formatDrivingDistanceKm,
+  formatDrivingDuration,
+  isCacheEntryValid,
+} from '../utils/routing';
 import {
   getDefaultLocationLabel,
   getFarmKey,
@@ -96,6 +101,8 @@ interface FarmDetailCardProps {
   onToggleSingleArc?: () => void;
   mobileSheetSnap?: MobileSheetSnap;
   onChangeMobileSheetSnap?: (snap: MobileSheetSnap) => void;
+  drivingDistanceCache?: DrivingDistanceCache;
+  isCalculatingDistances?: boolean;
 }
 
 function useDeviceCardMode() {
@@ -160,6 +167,8 @@ export const FarmDetailCard: React.FC<FarmDetailCardProps> = ({
   onToggleSingleArc,
   mobileSheetSnap = 'half',
   onChangeMobileSheetSnap,
+  drivingDistanceCache,
+  isCalculatingDistances = false,
 }) => {
   const [tilt, setTilt] = useState({ rotateX: 0, rotateY: 0 });
   const [copied, setCopied] = useState(false);
@@ -252,9 +261,25 @@ export const FarmDetailCard: React.FC<FarmDetailCardProps> = ({
   const statusCfg =
     APP_CONFIG.colors.statuses[farm.status] ||
     APP_CONFIG.colors.statuses.active;
-  const distanceKm = centralHub
-    ? calculateDistanceKm(centralHub.lat, centralHub.lng, farm.lat, farm.lng)
-    : null;
+  const cachedDrivingEntry =
+    centralHub && drivingDistanceCache
+      ? drivingDistanceCache[farm.id]
+      : undefined;
+  const isDrivingEntryValid = Boolean(
+    centralHub &&
+      isCacheEntryValid(
+        cachedDrivingEntry,
+        { lat: centralHub.lat, lng: centralHub.lng },
+        { lat: farm.lat, lng: farm.lng }
+      )
+  );
+  const validDrivingEntry = isDrivingEntryValid ? cachedDrivingEntry : undefined;
+  const hasDrivingDistance =
+    validDrivingEntry?.status === 'ok' &&
+    typeof validDrivingEntry.distanceMeters === 'number';
+  const isDrivingDistanceLoading = Boolean(
+    centralHub && isCalculatingDistances && !validDrivingEntry
+  );
 
   const currentManualChoice: IconChoice = farm.manualIcon || 'auto';
   const autoCategory = resolveFarmIconType(farm, {});
@@ -744,15 +769,33 @@ export const FarmDetailCard: React.FC<FarmDetailCardProps> = ({
                     category="hub"
                     className="h-3.5 w-3.5 text-[#2b8fd0]"
                   />
-                  <span>Cách {centralHub?.name || 'Nhà Máy Cám'}</span>
+                  <span>Quãng đường (lái xe)</span>
                 </div>
-                <div className="text-base font-extrabold text-[#2b8fd0] sm:text-lg">
-                  {distanceKm !== null ? (
-                    <CountUp end={distanceKm} decimals={2} suffix=" km" />
-                  ) : (
-                    <span>—</span>
-                  )}
-                </div>
+                {!centralHub ? (
+                  <div className="text-xs font-bold text-emerald-950/55 sm:text-sm">
+                    Chưa có dữ liệu
+                  </div>
+                ) : isDrivingDistanceLoading ? (
+                  <div className="text-sm font-bold text-[#2b8fd0]/85 sm:text-base">
+                    Đang tính...
+                  </div>
+                ) : hasDrivingDistance &&
+                  validDrivingEntry?.distanceMeters != null ? (
+                  <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                    <span className="font-mono-tabular text-base font-extrabold text-[#2b8fd0] sm:text-lg">
+                      {formatDrivingDistanceKm(validDrivingEntry.distanceMeters)}
+                    </span>
+                    {typeof validDrivingEntry.durationSeconds === 'number' && (
+                      <span className="text-[11px] font-bold text-emerald-950/60">
+                        {formatDrivingDuration(validDrivingEntry.durationSeconds)}
+                      </span>
+                    )}
+                  </div>
+                ) : (
+                  <div className="text-xs font-bold text-emerald-950/55 sm:text-sm">
+                    Chưa có dữ liệu
+                  </div>
+                )}
               </div>
 
               <div>
@@ -950,6 +993,8 @@ interface HubDetailCardProps {
   onSaveArcColors?: (colors: ArcColorConfig) => Promise<void>;
   mobileSheetSnap?: MobileSheetSnap;
   onChangeMobileSheetSnap?: (snap: MobileSheetSnap) => void;
+  drivingDistanceCache?: DrivingDistanceCache;
+  isCalculatingDistances?: boolean;
 }
 
 /**
@@ -974,6 +1019,8 @@ export const HubDetailCard: React.FC<HubDetailCardProps> = ({
   onSaveArcColors,
   mobileSheetSnap = 'half',
   onChangeMobileSheetSnap,
+  drivingDistanceCache,
+  isCalculatingDistances = false,
 }) => {
   const [copied, setCopied] = useState(false);
   const [logoError, setLogoError] = useState(false);
@@ -1591,12 +1638,21 @@ export const HubDetailCard: React.FC<HubDetailCardProps> = ({
               ) : (
                 <div className="max-h-44 space-y-1.5 overflow-y-auto pr-1">
                   {connectedFarms.map((f) => {
-                    const dist = calculateDistanceKm(
-                      centralHub.lat,
-                      centralHub.lng,
-                      f.lat,
-                      f.lng
+                    const entry = drivingDistanceCache?.[f.id];
+                    const isEntryValid = isCacheEntryValid(
+                      entry,
+                      { lat: centralHub.lat, lng: centralHub.lng },
+                      { lat: f.lat, lng: f.lng }
                     );
+                    const validEntry = isEntryValid ? entry : undefined;
+                    const distLabel =
+                      validEntry?.status === 'ok' &&
+                      typeof validEntry.distanceMeters === 'number'
+                        ? formatDrivingDistanceKm(validEntry.distanceMeters)
+                        : isCalculatingDistances && !validEntry
+                        ? 'Đang tính...'
+                        : 'Chưa có dữ liệu';
+
                     return (
                       <button
                         key={f.id}
@@ -1613,8 +1669,14 @@ export const HubDetailCard: React.FC<HubDetailCardProps> = ({
                             {f.name}
                           </span>
                         </div>
-                        <span className="font-mono-tabular shrink-0 text-[11px] font-extrabold text-[#2b8fd0]">
-                          {dist.toFixed(1)} km
+                        <span
+                          className={`font-mono-tabular shrink-0 text-[11px] font-extrabold ${
+                            validEntry?.status === 'ok'
+                              ? 'text-[#2b8fd0]'
+                              : 'text-emerald-950/50'
+                          }`}
+                        >
+                          {distLabel}
                         </span>
                       </button>
                     );

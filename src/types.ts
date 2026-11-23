@@ -95,3 +95,18 @@ export interface ArcColorConfig {
   pig: { from: string; to: string };
 }
 
+export interface DrivingRouteResult {
+  distanceMeters: number | null;
+  durationSeconds: number | null;
+}
+
+export interface CachedDrivingEntry extends DrivingRouteResult {
+  originLat: number;
+  originLng: number;
+  destLat: number;
+  destLng: number;
+  status: 'ok' | 'unavailable';
+  updatedAt: number;
+}
+
+export type DrivingDistanceCache = Record<string, CachedDrivingEntry>;

@@ -18,6 +18,7 @@ import {
   AppStage,
   ArcColorConfig,
   CentralHub,
+  DrivingDistanceCache,
   Farm,
   FarmCategory,
   FarmCustomLabels,
@@ -40,6 +41,12 @@ import {
   parseKMLContent,
   validateAndNormalizeLatLng,
 } from './utils/parsers';
+import {
+  getDrivingDistances,
+  isCacheEntryValid,
+  loadDrivingDistanceCache,
+  saveDrivingDistanceCache,
+} from './utils/routing';
 import { soundEngine } from './utils/sound';
 import { CursorSpotlight } from './components/CursorSpotlight';
 import { LoadingScreen } from './components/LoadingScreen';
@@ -681,6 +688,22 @@ export default function App() {
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
+  // 7c. Cache & trạng thái tính quãng đường di chuyển thực tế bằng ô tô (OSRM)
+  const [drivingDistanceCache, setDrivingDistanceCache] =
+    useState<DrivingDistanceCache>(() =>
+      loadDrivingDistanceCache(APP_CONFIG.drivingDistancesStorageKey)
+    );
+  const drivingDistanceCacheRef = useRef<DrivingDistanceCache>(
+    drivingDistanceCache
+  );
+  drivingDistanceCacheRef.current = drivingDistanceCache;
+
+  const [isCalculatingDistances, setIsCalculatingDistances] =
+    useState<boolean>(false);
+  const [recalcDistancesTick, setRecalcDistancesTick] = useState<number>(0);
+  const forceRecalcDistancesRef = useRef<boolean>(false);
+  const drivingAbortRef = useRef<AbortController | null>(null);
+
   const mapSceneRef = useRef<MapSceneHandle | null>(null);
 
   useEffect(() => {
@@ -717,6 +740,116 @@ export default function App() {
     const timer = setTimeout(() => setToastMessage(null), 4200);
     return () => clearTimeout(timer);
   }, [toastMessage]);
+
+  const handleRecalculateDrivingDistances = useCallback(() => {
+    forceRecalcDistancesRef.current = true;
+    setRecalcDistancesTick((prev) => prev + 1);
+  }, []);
+
+  // Tự động tính quãng đường lái xe thực tế từ FEED FACTORY cho các điểm chưa có cache hoặc bị đổi tọa độ
+  useEffect(() => {
+    if (!centralHub) {
+      setIsCalculatingDistances(false);
+      return;
+    }
+
+    const origin = { lat: centralHub.lat, lng: centralHub.lng };
+    const forceAll = forceRecalcDistancesRef.current;
+    forceRecalcDistancesRef.current = false;
+
+    const nonHubFarms = farms.filter(
+      (f) => !f.isFeedMill && f.id !== centralHub.id
+    );
+
+    if (forceAll) {
+      drivingDistanceCacheRef.current = {};
+      setDrivingDistanceCache({});
+      saveDrivingDistanceCache(APP_CONFIG.drivingDistancesStorageKey, {});
+    }
+
+    const currentCache = drivingDistanceCacheRef.current;
+    const targets = forceAll
+      ? nonHubFarms
+      : nonHubFarms.filter(
+          (f) =>
+            !isCacheEntryValid(currentCache[f.id], origin, {
+              lat: f.lat,
+              lng: f.lng,
+            })
+        );
+
+    if (targets.length === 0) {
+      setIsCalculatingDistances(false);
+      return;
+    }
+
+    drivingAbortRef.current?.abort();
+    const controller = new AbortController();
+    drivingAbortRef.current = controller;
+
+    setIsCalculatingDistances(true);
+    let hadBatchError = false;
+
+    void (async () => {
+      try {
+        await getDrivingDistances(
+          origin,
+          targets.map((f) => ({ lat: f.lat, lng: f.lng })),
+          {
+            signal: controller.signal,
+            onBatchComplete: (startIndex, batchResults) => {
+              if (controller.signal.aborted) return;
+              const nextCache: DrivingDistanceCache = {
+                ...drivingDistanceCacheRef.current,
+              };
+              const now = Date.now();
+              for (let i = 0; i < batchResults.length; i++) {
+                const farmItem = targets[startIndex + i];
+                const resItem = batchResults[i];
+                if (!farmItem || !resItem) continue;
+                nextCache[farmItem.id] = {
+                  originLat: origin.lat,
+                  originLng: origin.lng,
+                  destLat: farmItem.lat,
+                  destLng: farmItem.lng,
+                  distanceMeters: resItem.distanceMeters,
+                  durationSeconds: resItem.durationSeconds,
+                  status:
+                    resItem.distanceMeters !== null ? 'ok' : 'unavailable',
+                  updatedAt: now,
+                };
+              }
+              drivingDistanceCacheRef.current = nextCache;
+              setDrivingDistanceCache(nextCache);
+              saveDrivingDistanceCache(
+                APP_CONFIG.drivingDistancesStorageKey,
+                nextCache
+              );
+            },
+            onBatchError: () => {
+              hadBatchError = true;
+            },
+          }
+        );
+
+        if (!controller.signal.aborted && hadBatchError) {
+          showToast('Không lấy được quãng đường');
+        }
+      } catch (err) {
+        if (controller.signal.aborted) return;
+        console.error('[DrivingDistance] Không lấy được quãng đường:', err);
+        showToast('Không lấy được quãng đường');
+      } finally {
+        if (!controller.signal.aborted && drivingAbortRef.current === controller) {
+          setIsCalculatingDistances(false);
+        }
+      }
+    })();
+
+    return () => {
+      controller.abort();
+    };
+  }, [farms, centralHub, recalcDistancesTick, showToast]);
 
   useEffect(() => {
     if (!isAutoTime) return;
@@ -1749,6 +1882,9 @@ export default function App() {
             onOpenBulkIconModal={() => setIsBulkIconModalOpen(true)}
             onOpenPositionDiagnostics={() => setIsPositionDiagOpen(true)}
             hasActiveCard={Boolean(selectedFarm || isHubSelected)}
+            drivingDistanceCache={drivingDistanceCache}
+            isCalculatingDistances={isCalculatingDistances}
+            onRecalculateDistances={handleRecalculateDrivingDistances}
           />
         )}
       </AnimatePresence>
@@ -1778,6 +1914,8 @@ export default function App() {
             }}
             mobileSheetSnap={mobileSheetSnap}
             onChangeMobileSheetSnap={setMobileSheetSnap}
+            drivingDistanceCache={drivingDistanceCache}
+            isCalculatingDistances={isCalculatingDistances}
           />
         )}
       </AnimatePresence>
@@ -1801,6 +1939,8 @@ export default function App() {
             onSaveArcColors={handleSaveArcColors}
             mobileSheetSnap={mobileSheetSnap}
             onChangeMobileSheetSnap={setMobileSheetSnap}
+            drivingDistanceCache={drivingDistanceCache}
+            isCalculatingDistances={isCalculatingDistances}
           />
         )}
       </AnimatePresence>

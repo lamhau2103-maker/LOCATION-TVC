@@ -2,6 +2,7 @@ import React, {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -743,6 +744,177 @@ function refreshGlobeHubTextures(maxAnisotropy = 16): void {
   }
 }
 
+interface RipplePointItem {
+  farm: Farm;
+  lng: number;
+  lat: number;
+  color: string;
+  isOther: boolean;
+  sizePx: number;
+}
+
+interface ArcGeometryItem {
+  farm: Farm;
+  hubLng: number;
+  hubLat: number;
+  farmLng: number;
+  farmLat: number;
+  ctrlPt: [number, number];
+  fullCoords: Array<[number, number]>;
+  lineColor: string;
+}
+
+const FarmRipplesOverlay = React.memo(function FarmRipplesOverlay({
+  ripplePoints,
+  normalizedQuery,
+  matchedFarmIds,
+  isHubSelected,
+  centralHubId,
+  farmRippleRefs,
+  rippleLayerRef,
+  onSyncAfterRender,
+}: {
+  ripplePoints: RipplePointItem[];
+  normalizedQuery: string;
+  matchedFarmIds: Set<string>;
+  isHubSelected: boolean;
+  centralHubId?: string;
+  farmRippleRefs: React.MutableRefObject<Map<string, HTMLDivElement>>;
+  rippleLayerRef: React.MutableRefObject<HTMLDivElement | null>;
+  onSyncAfterRender: () => void;
+}) {
+  useLayoutEffect(() => {
+    onSyncAfterRender();
+  });
+
+  if (ripplePoints.length === 0) return null;
+
+  const hasSearch = normalizedQuery.length > 0;
+
+  return (
+    <div
+      ref={rippleLayerRef}
+      className="farm-ripple-layer pointer-events-none fixed inset-0 z-10 overflow-hidden"
+      aria-hidden="true"
+    >
+      {ripplePoints.map((item) => {
+        const isHubItem = Boolean(
+          item.farm.isFeedMill ||
+            item.farm.subType === 'hub' ||
+            (centralHubId && item.farm.id === centralHubId)
+        );
+        const isDimmedBySearch = hasSearch && !matchedFarmIds.has(item.farm.id);
+        const isDimmedByHub =
+          isHubSelected &&
+          !isHubItem &&
+          !(
+            item.farm.isConnectable &&
+            (item.farm.category === 'chicken' || item.farm.category === 'pig')
+          );
+        const dimmedMode = isDimmedBySearch
+          ? 'search'
+          : isDimmedByHub
+          ? 'hub'
+          : undefined;
+
+        return (
+          <div
+            key={`farm-ripple-${item.farm.id}`}
+            ref={(el) => {
+              if (el) {
+                farmRippleRefs.current.set(item.farm.id, el);
+              } else {
+                farmRippleRefs.current.delete(item.farm.id);
+              }
+            }}
+            data-dimmed={dimmedMode}
+            className="farm-ripple-anchor"
+            style={
+              {
+                '--ripple-color': item.color,
+                '--ripple-fill': hexToSoftRgba(item.color, 0.16),
+                '--ripple-size': `${item.sizePx}px`,
+              } as React.CSSProperties
+            }
+          >
+            <div
+              className={`farm-ripple-ring ${
+                item.isOther ? 'farm-ripple-ring--other' : ''
+              }`}
+            />
+            <div
+              className={`farm-ripple-ring farm-ripple-ring-delayed ${
+                item.isOther ? 'farm-ripple-ring--other' : ''
+              }`}
+            />
+          </div>
+        );
+      })}
+    </div>
+  );
+});
+
+const SupplyArcsOverlay = React.memo(function SupplyArcsOverlay({
+  arcGeometries,
+  highlightedFarmId,
+  arcPathRefs,
+  arcLayerRef,
+  onSyncAfterRender,
+}: {
+  arcGeometries: ArcGeometryItem[];
+  highlightedFarmId: string | null;
+  arcPathRefs: React.MutableRefObject<Map<string, SVGPathElement>>;
+  arcLayerRef: React.MutableRefObject<HTMLDivElement | null>;
+  onSyncAfterRender: () => void;
+}) {
+  useLayoutEffect(() => {
+    onSyncAfterRender();
+  });
+
+  if (arcGeometries.length === 0) return null;
+
+  const hasMultiHighlight =
+    arcGeometries.length > 1 &&
+    highlightedFarmId !== null &&
+    arcGeometries.some((g) => g.farm.id === highlightedFarmId);
+
+  return (
+    <div
+      ref={arcLayerRef}
+      className="pointer-events-none fixed inset-0 z-10 overflow-hidden"
+      aria-hidden="true"
+    >
+      <svg className="pointer-events-none absolute inset-0 h-full w-full">
+        {arcGeometries.map((arc) => {
+          const isHighlighted =
+            hasMultiHighlight && arc.farm.id === highlightedFarmId;
+          const isDimmed = hasMultiHighlight && !isHighlighted;
+
+          return (
+            <path
+              key={`arc-dash-${arc.farm.id}`}
+              ref={(el) => {
+                if (el) {
+                  arcPathRefs.current.set(arc.farm.id, el);
+                } else {
+                  arcPathRefs.current.delete(arc.farm.id);
+                }
+              }}
+              fill="none"
+              stroke={arc.lineColor}
+              strokeWidth={isHighlighted ? 2.8 : ARC_LINE_WEIGHT}
+              strokeOpacity={isDimmed ? 0.3 : isHighlighted ? 1 : 0.8}
+              strokeDasharray="8 10"
+              strokeLinecap="round"
+              className="supply-arc-dash-path pointer-events-none is-arc-hidden"
+            />
+          );
+        })}
+      </svg>
+    </div>
+  );
+});
+
 export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
   (
     {
@@ -793,33 +965,23 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
     const preloadedTileUrlsRef = useRef<Set<string>>(new Set());
     const lastPreloadTsRef = useRef<number>(0);
 
+    const arcLayerRef = useRef<HTMLDivElement | null>(null);
+    const rippleLayerRef = useRef<HTMLDivElement | null>(null);
     const arcPathRefs = useRef<Map<string, SVGPathElement>>(new Map());
     const farmRippleRefs = useRef<Map<string, HTMLDivElement>>(new Map());
-    const arcGeometriesRef = useRef<
-      Array<{
-        farm: Farm;
-        hubLng: number;
-        hubLat: number;
-        farmLng: number;
-        farmLat: number;
-        ctrlPt: [number, number];
-        fullCoords: Array<[number, number]>;
-        lineColor: string;
-      }>
-    >([]);
-    const ripplePointsRef = useRef<
-      Array<{
-        farm: Farm;
-        lng: number;
-        lat: number;
-        color: string;
-        isOther: boolean;
-        sizePx: number;
-      }>
-    >([]);
+    const arcGeometriesRef = useRef<ArcGeometryItem[]>([]);
+    const ripplePointsRef = useRef<RipplePointItem[]>([]);
     const showFactoryArcsRef = useRef<boolean>(true);
-    const pendingClusterSyncRef = useRef<boolean>(true);
-    const syncArcOverlayRef = useRef<() => void>(() => {});
+    const isZoomingRef = useRef<boolean>(false);
+    const unclusteredIdsRef = useRef<Set<string>>(new Set());
+    const zoomEndRippleTimerRef = useRef<number | null>(null);
+    const clusterDebounceTimerRef = useRef<number | null>(null);
+    const syncPositionsRef = useRef<(includeRipples: boolean) => void>(
+      () => {}
+    );
+    const scheduleClusterSyncRef = useRef<(delayMs?: number) => void>(
+      () => {}
+    );
 
     const [hoveredArcId, setHoveredArcId] = useState<string | null>(null);
     const [hoveredId, setHoveredId] = useState<string | null>(null);
@@ -2146,6 +2308,8 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
               'circle-radius': clusterRadiusExpr,
               'circle-blur': 0.65,
               'circle-translate': [0, 3.5],
+              'circle-opacity-transition': { duration: 0, delay: 0 },
+              'circle-radius-transition': { duration: 0, delay: 0 },
             },
           });
         }
@@ -2162,6 +2326,8 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
               'circle-stroke-width': 3.5,
               'circle-stroke-color': '#ffffff',
               'circle-opacity': 0.96,
+              'circle-opacity-transition': { duration: 0, delay: 0 },
+              'circle-radius-transition': { duration: 0, delay: 0 },
             },
           });
         }
@@ -2183,6 +2349,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
               'text-color': '#ffffff',
               'text-halo-color': 'rgba(15, 23, 42, 0.35)',
               'text-halo-width': 1,
+              'text-opacity-transition': { duration: 0, delay: 0 },
             },
           });
         }
@@ -2242,6 +2409,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
               'text-halo-color': '#ffffff',
               'text-halo-width': 2.2,
               'text-halo-blur': 0.4,
+              'text-opacity-transition': { duration: 0, delay: 0 },
             },
           });
         }
@@ -2266,6 +2434,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
             },
             paint: {
               'icon-opacity': 1,
+              'icon-opacity-transition': { duration: 0, delay: 0 },
             },
           });
         }
@@ -2407,7 +2576,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         pixelRatio: getOptimalPixelRatio(liteMode),
         maxTileCacheSize: MAP_TILE_PRELOAD_CONFIG.maxTileCacheSize,
         maxTileCacheZoomLevels: MAP_TILE_PRELOAD_CONFIG.maxTileCacheZoomLevels,
-        fadeDuration: MAP_TILE_PRELOAD_CONFIG.rasterFadeDurationMs,
+        fadeDuration: 0,
         refreshExpiredTiles: false,
         attributionControl: false,
       });
@@ -2770,7 +2939,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         }
       });
 
-      // Tạm dừng tooltip khi đang kéo/zoom để giữ mượt 60fps & preload tile mức zoom liền kề khi dừng
+      // Tạm dừng animation, backdrop-filter và tooltip khi đang zoom/kéo để giữ mượt 60fps
       const markInteractionStart = () => {
         if (interactionResumeTimerRef.current !== null) {
           window.clearTimeout(interactionResumeTimerRef.current);
@@ -2780,13 +2949,28 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         setHoveredTooltip((prev) => (prev !== null ? null : prev));
       };
 
-      const markInteractionEnd = () => {
+      const markZoomStart = () => {
+        markInteractionStart();
+        if (zoomEndRippleTimerRef.current !== null) {
+          window.clearTimeout(zoomEndRippleTimerRef.current);
+          zoomEndRippleTimerRef.current = null;
+        }
+        if (clusterDebounceTimerRef.current !== null) {
+          window.clearTimeout(clusterDebounceTimerRef.current);
+          clusterDebounceTimerRef.current = null;
+        }
+        isZoomingRef.current = true;
+        arcLayerRef.current?.classList.add('is-zooming');
+        rippleLayerRef.current?.classList.add('is-zooming');
+        document.body.classList.add('map-is-zooming');
+      };
+
+      const schedulePreloadAfterIdle = () => {
         if (interactionResumeTimerRef.current !== null) {
           window.clearTimeout(interactionResumeTimerRef.current);
         }
         interactionResumeTimerRef.current = window.setTimeout(() => {
           isMapInteractingRef.current = false;
-          syncArcOverlayRef.current();
 
           // Preload nhẹ các tile mức zoom lân cận (z-1, z+1) theo throttle để zoom ra/vào không bị trống
           const now = Date.now();
@@ -2805,32 +2989,66 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         }, 80);
       };
 
-      map.on('movestart', markInteractionStart);
-      map.on('zoomstart', markInteractionStart);
-      map.on('moveend', markInteractionEnd);
-      map.on('zoomend', markInteractionEnd);
+      const markZoomEnd = () => {
+        // Bật lại nét đứt ngay khi zoomend & cập nhật toạ độ SVG
+        arcLayerRef.current?.classList.remove('is-zooming');
+        syncPositionsRef.current(false);
 
-      const syncOverlayFromMap = () => {
-        syncArcOverlayRef.current();
+        if (zoomEndRippleTimerRef.current !== null) {
+          window.clearTimeout(zoomEndRippleTimerRef.current);
+        }
+        zoomEndRippleTimerRef.current = window.setTimeout(() => {
+          zoomEndRippleTimerRef.current = null;
+          isZoomingRef.current = false;
+          document.body.classList.remove('map-is-zooming');
+          rippleLayerRef.current?.classList.remove('is-zooming');
+          scheduleClusterSyncRef.current(50);
+        }, 100);
+
+        schedulePreloadAfterIdle();
       };
-      map.on('move', syncOverlayFromMap);
-      map.on('zoom', syncOverlayFromMap);
-      map.on('resize', syncOverlayFromMap);
-      map.on('idle', syncOverlayFromMap);
-      map.on('sourcedata', (e) => {
-        if (
-          e.sourceId === 'farms' ||
-          e.sourceId === 'hub-source' ||
-          e.sourceId === 'selected-pin-source'
-        ) {
-          pendingClusterSyncRef.current = true;
-          syncOverlayFromMap();
+
+      const markMoveEnd = () => {
+        if (!isZoomingRef.current) {
+          syncPositionsRef.current(true);
+          scheduleClusterSyncRef.current(150);
+        }
+        schedulePreloadAfterIdle();
+      };
+
+      map.on('movestart', markInteractionStart);
+      map.on('zoomstart', markZoomStart);
+      map.on('moveend', markMoveEnd);
+      map.on('zoomend', markZoomEnd);
+
+      map.on('zoom', () => {
+        // Trong lúc zoom chỉ cập nhật đường SVG d; không queryRenderedFeatures hay đụng vòng tỏa
+        syncPositionsRef.current(false);
+      });
+      map.on('move', () => {
+        // Khi chỉ pan (không zoom), cập nhật mượt vị trí SVG + vòng tỏa đã biết
+        syncPositionsRef.current(!isZoomingRef.current);
+      });
+      map.on('resize', () => {
+        syncPositionsRef.current(!isZoomingRef.current);
+        if (!isZoomingRef.current) {
+          scheduleClusterSyncRef.current(150);
         }
       });
-      map.on('render', () => {
-        if (pendingClusterSyncRef.current) {
-          pendingClusterSyncRef.current = false;
-          syncOverlayFromMap();
+      map.on('idle', () => {
+        if (!isZoomingRef.current) {
+          scheduleClusterSyncRef.current(150);
+        }
+      });
+      map.on('sourcedata', (e) => {
+        if (
+          !isZoomingRef.current &&
+          e.isSourceLoaded &&
+          (e.sourceId === 'farms' ||
+            e.sourceId === 'hub-source' ||
+            e.sourceId === 'selected-pin-source')
+        ) {
+          scheduleClusterSyncRef.current(150);
         }
       });
 
@@ -2869,10 +3087,9 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
             })),
           });
         }
-        pendingClusterSyncRef.current = true;
-        syncArcOverlayRef.current();
+        scheduleClusterSyncRef.current(0);
         requestAnimationFrame(() => {
-          syncArcOverlayRef.current();
+          syncPositionsRef.current(true);
         });
         // Preload trước một số tile mức zoom lân cận quanh vùng trung tâm
         preloadAdjacentZoomTiles(
@@ -2907,7 +3124,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
                 bearing: 0,
               });
             }
-            syncArcOverlayRef.current();
+            syncPositionsRef.current(!isZoomingRef.current);
           } catch {
             // ignore
           }
@@ -2928,6 +3145,13 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         if (interactionResumeTimerRef.current !== null) {
           window.clearTimeout(interactionResumeTimerRef.current);
         }
+        if (zoomEndRippleTimerRef.current !== null) {
+          window.clearTimeout(zoomEndRippleTimerRef.current);
+        }
+        if (clusterDebounceTimerRef.current !== null) {
+          window.clearTimeout(clusterDebounceTimerRef.current);
+        }
+        document.body.classList.remove('map-is-zooming');
         resizeObserver.disconnect();
         window.removeEventListener('resize', handleViewportResize);
         window.removeEventListener('orientationchange', handleViewportResize);
@@ -2940,18 +3164,30 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
     // Khi chuyển từ Quả địa cầu 3D sang Bản đồ 2D, gọi map.resize() + triggerRepaint() (giữ nguyên 1 instance duy nhất)
     useEffect(() => {
       if (stage === 'map' && mapRef.current) {
-        pendingClusterSyncRef.current = true;
         mapRef.current.resize();
         mapRef.current.triggerRepaint();
-        syncArcOverlayRef.current();
+        scheduleClusterSyncRef.current(0);
         const t = window.setTimeout(() => {
-          pendingClusterSyncRef.current = true;
           mapRef.current?.resize();
           mapRef.current?.triggerRepaint();
-          syncArcOverlayRef.current();
+          scheduleClusterSyncRef.current(0);
         }, 60);
         return () => window.clearTimeout(t);
       }
+
+      isZoomingRef.current = false;
+      document.body.classList.remove('map-is-zooming');
+      arcLayerRef.current?.classList.remove('is-zooming');
+      rippleLayerRef.current?.classList.remove('is-zooming');
+      if (zoomEndRippleTimerRef.current !== null) {
+        window.clearTimeout(zoomEndRippleTimerRef.current);
+        zoomEndRippleTimerRef.current = null;
+      }
+      if (clusterDebounceTimerRef.current !== null) {
+        window.clearTimeout(clusterDebounceTimerRef.current);
+        clusterDebounceTimerRef.current = null;
+      }
+      return undefined;
     }, [stage]);
 
     // Chuyển đổi 3 lớp nền Đường | Địa hình | Vệ tinh bằng cross-fade opacity (KHÔNG gọi map.setStyle() -> ZERO chớp trắng/xám!)
@@ -3029,61 +3265,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
       buildSelectedPinGeoJSON,
     ]);
 
-    // Hiệu ứng vòng sáng pulse nhịp nhàng quanh chân ghim đang chọn trên Bản đồ 2D (tự tạm dừng khi đang kéo/zoom)
-    useEffect(() => {
-      const map = mapRef.current;
-      if (stage !== 'map' || (!selectedFarm && !isHubSelected) || !map) return;
-
-      let rafId = 0;
-      const startTime = performance.now();
-
-      const animateSelectedPulse = (now: number) => {
-        if (!mapRef.current || !isMapLoadedRef.current) return;
-
-        if (!isMapInteractingRef.current) {
-          const cycle = ((now - startTime) % 1500) / 1500;
-          const eased = 1 - Math.pow(1 - cycle, 2);
-          const outerRadius = 11 + eased * 20;
-          const outerStrokeOpacity = Math.max(0, (1 - cycle) * 0.88);
-          const outerFillOpacity = Math.max(0, (1 - cycle) * 0.3);
-          const innerRadius = 8 + Math.sin(cycle * Math.PI) * 3.2;
-
-          try {
-            if (map.getLayer('farm-selected-pulse-outer')) {
-              map.setPaintProperty(
-                'farm-selected-pulse-outer',
-                'circle-radius',
-                outerRadius
-              );
-              map.setPaintProperty(
-                'farm-selected-pulse-outer',
-                'circle-opacity',
-                outerFillOpacity
-              );
-              map.setPaintProperty(
-                'farm-selected-pulse-outer',
-                'circle-stroke-opacity',
-                outerStrokeOpacity
-              );
-            }
-            if (map.getLayer('farm-selected-pulse-inner')) {
-              map.setPaintProperty(
-                'farm-selected-pulse-inner',
-                'circle-radius',
-                innerRadius
-              );
-            }
-          } catch {
-            // ignore
-          }
-        }
-
-        rafId = requestAnimationFrame(animateSelectedPulse);
-      };
-
-      rafId = requestAnimationFrame(animateSelectedPulse);
-      return () => cancelAnimationFrame(rafId);
-    }, [stage, selectedFarm, isHubSelected]);
+    // (Hiệu ứng tỏa tại điểm đang chọn dùng vòng tỏa CSS thuần, không chạy vòng lặp requestAnimationFrame)
 
     // Cập nhật vòng bán kính an toàn sinh học trên Bản đồ 2D
     useEffect(() => {
@@ -3231,17 +3413,17 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
 
     ripplePointsRef.current = ripplePoints;
 
-    const syncArcOverlayAndRipples = useCallback(() => {
+    const syncProjectedPositions = useCallback((includeRipples: boolean) => {
       const map = mapRef.current;
       const arcs = arcGeometriesRef.current;
       const ripples = ripplePointsRef.current;
 
       if (!map || latestStateRef.current.stage !== 'map') {
         arcPathRefs.current.forEach((pathEl) => {
-          pathEl.style.display = 'none';
+          pathEl.classList.add('is-arc-hidden');
         });
         farmRippleRefs.current.forEach((rippleEl) => {
-          rippleEl.style.display = 'none';
+          rippleEl.classList.remove('is-ripple-visible');
         });
         return;
       }
@@ -3252,7 +3434,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
 
       if (!showFactoryArcsRef.current || arcs.length === 0) {
         arcPathRefs.current.forEach((pathEl) => {
-          pathEl.style.display = 'none';
+          pathEl.classList.add('is-arc-hidden');
         });
       } else {
         for (const arc of arcs) {
@@ -3261,31 +3443,64 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
           const p2 = map.project([arc.farmLng, arc.farmLat]);
 
           const pathEl = arcPathRefs.current.get(arc.farm.id);
-          if (pathEl) {
-            const minX = Math.min(p0.x, p1.x, p2.x);
-            const maxX = Math.max(p0.x, p1.x, p2.x);
-            const minY = Math.min(p0.y, p1.y, p2.y);
-            const maxY = Math.max(p0.y, p1.y, p2.y);
-            const inViewport =
-              maxX >= -120 &&
-              minX <= vw + 120 &&
-              maxY >= -120 &&
-              minY <= vh + 120;
+          if (!pathEl) continue;
 
-            if (inViewport) {
-              pathEl.setAttribute(
-                'd',
-                `M ${p0.x.toFixed(1)} ${p0.y.toFixed(1)} Q ${p1.x.toFixed(1)} ${p1.y.toFixed(1)} ${p2.x.toFixed(1)} ${p2.y.toFixed(1)}`
-              );
-              pathEl.style.display = '';
-            } else {
-              pathEl.style.display = 'none';
-            }
+          const minX = Math.min(p0.x, p1.x, p2.x);
+          const maxX = Math.max(p0.x, p1.x, p2.x);
+          const minY = Math.min(p0.y, p1.y, p2.y);
+          const maxY = Math.max(p0.y, p1.y, p2.y);
+          const inViewport =
+            maxX >= -120 &&
+            minX <= vw + 120 &&
+            maxY >= -120 &&
+            minY <= vh + 120;
+
+          if (inViewport) {
+            pathEl.setAttribute(
+              'd',
+              `M ${p0.x.toFixed(1)} ${p0.y.toFixed(1)} Q ${p1.x.toFixed(1)} ${p1.y.toFixed(1)} ${p2.x.toFixed(1)} ${p2.y.toFixed(1)}`
+            );
+            pathEl.classList.remove('is-arc-hidden');
+          } else {
+            pathEl.classList.add('is-arc-hidden');
           }
         }
       }
 
-      const unclusteredIds = new Set<string>();
+      if (!includeRipples) return;
+
+      const unclusteredIds = unclusteredIdsRef.current;
+      for (const item of ripples) {
+        const rippleEl = farmRippleRefs.current.get(item.farm.id);
+        if (!rippleEl) continue;
+
+        if (!unclusteredIds.has(item.farm.id)) {
+          rippleEl.classList.remove('is-ripple-visible');
+          continue;
+        }
+
+        const pt = map.project([item.lng, item.lat]);
+        const inViewport =
+          pt.x >= -44 && pt.x <= vw + 44 && pt.y >= -44 && pt.y <= vh + 44;
+
+        if (inViewport) {
+          rippleEl.style.transform = `translate3d(${pt.x.toFixed(1)}px, ${pt.y.toFixed(1)}px, 0)`;
+          rippleEl.classList.add('is-ripple-visible');
+        } else {
+          rippleEl.classList.remove('is-ripple-visible');
+        }
+      }
+    }, []);
+
+    const recomputeUnclusteredAndSync = useCallback(() => {
+      const map = mapRef.current;
+      if (!map || latestStateRef.current.stage !== 'map') {
+        unclusteredIdsRef.current = new Set();
+        syncProjectedPositions(true);
+        return;
+      }
+
+      const nextUnclustered = new Set<string>();
       if (isMapLoadedRef.current) {
         const unclusteredLayers = [
           'farm-icons',
@@ -3302,7 +3517,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
             for (const feat of rendered) {
               const id = feat.properties?.id;
               if (id !== undefined && id !== null) {
-                unclusteredIds.add(String(id));
+                nextUnclustered.add(String(id));
               }
             }
           } catch {
@@ -3311,32 +3526,43 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         }
       }
 
-      for (const item of ripples) {
-        const rippleEl = farmRippleRefs.current.get(item.farm.id);
-        if (!rippleEl) continue;
+      unclusteredIdsRef.current = nextUnclustered;
+      syncProjectedPositions(true);
+    }, [syncProjectedPositions]);
 
-        const pt = map.project([item.lng, item.lat]);
-        const isTargetVisible =
-          unclusteredIds.has(item.farm.id) &&
-          pt.x >= -44 &&
-          pt.x <= vw + 44 &&
-          pt.y >= -44 &&
-          pt.y <= vh + 44;
-
-        if (isTargetVisible) {
-          rippleEl.style.transform = `translate3d(${pt.x.toFixed(1)}px, ${pt.y.toFixed(1)}px, 0)`;
-          rippleEl.style.display = 'block';
-        } else {
-          rippleEl.style.display = 'none';
+    const scheduleDebouncedClusterSync = useCallback(
+      (delayMs = 150) => {
+        if (clusterDebounceTimerRef.current !== null) {
+          window.clearTimeout(clusterDebounceTimerRef.current);
+          clusterDebounceTimerRef.current = null;
         }
-      }
-    }, []);
+        if (delayMs <= 0) {
+          recomputeUnclusteredAndSync();
+          return;
+        }
+        clusterDebounceTimerRef.current = window.setTimeout(() => {
+          clusterDebounceTimerRef.current = null;
+          if (!isZoomingRef.current) {
+            recomputeUnclusteredAndSync();
+          }
+        }, delayMs);
+      },
+      [recomputeUnclusteredAndSync]
+    );
 
-    syncArcOverlayRef.current = syncArcOverlayAndRipples;
+    syncPositionsRef.current = syncProjectedPositions;
+    scheduleClusterSyncRef.current = scheduleDebouncedClusterSync;
 
-    // Cập nhật nguồn GeoJSON tĩnh phục vụ hover/click đường cung & đồng bộ SVG + vòng tỏa CSS
+    const handleArcOverlayAfterRender = useCallback(() => {
+      syncProjectedPositions(false);
+    }, [syncProjectedPositions]);
+
+    const handleRippleOverlayAfterRender = useCallback(() => {
+      syncProjectedPositions(!isZoomingRef.current);
+    }, [syncProjectedPositions]);
+
+    // Cập nhật nguồn GeoJSON tĩnh phục vụ hover/click đường cung & đồng bộ SVG + vòng tỏa CSS khi dữ liệu/filter đổi
     useEffect(() => {
-      pendingClusterSyncRef.current = true;
       const map = mapRef.current;
       if (map && isMapLoadedRef.current) {
         const hitSource = map.getSource('supply-bezier-arcs') as
@@ -3371,9 +3597,9 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         }
       }
 
-      syncArcOverlayAndRipples();
+      recomputeUnclusteredAndSync();
       const rafId = requestAnimationFrame(() => {
-        syncArcOverlayAndRipples();
+        recomputeUnclusteredAndSync();
       });
       return () => cancelAnimationFrame(rafId);
     }, [
@@ -3384,7 +3610,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
       selectedFarm,
       isHubSelected,
       activeCategories,
-      syncArcOverlayAndRipples,
+      recomputeUnclusteredAndSync,
     ]);
 
     const handleZoomIn = useCallback(() => {
@@ -3402,6 +3628,9 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         duration: MAP_ZOOM_CONFIG.zoomButtonDurationMs,
       });
     }, []);
+
+    const highlightedArcFarmId =
+      hoveredArcId || (selectedFarm && !isHubSelected ? selectedFarm.id : null);
 
     const currentPreset = APP_CONFIG.timePresets[timeOfDay];
 
@@ -3435,115 +3664,28 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         />
 
         {/* Lớp vòng tỏa CSS (ripple/pulse) cho TẤT CẢ điểm chưa gom cụm: Trại gà/heo & nhóm Khác */}
-        {stage === 'map' && ripplePoints.length > 0 && (
-          <div
-            className="pointer-events-none fixed inset-0 z-10 overflow-hidden"
-            aria-hidden="true"
-          >
-            {ripplePoints.map((item) => {
-              const hasSearch = normalizedQuery.length > 0;
-              const isHubItem = Boolean(
-                item.farm.isFeedMill ||
-                  item.farm.subType === 'hub' ||
-                  (centralHub?.id && item.farm.id === centralHub.id)
-              );
-              const isDimmedBySearch =
-                hasSearch && !matchedFarmIds.has(item.farm.id);
-              const isDimmedByHub =
-                isHubSelected &&
-                !isHubItem &&
-                !(
-                  item.farm.isConnectable &&
-                  (item.farm.category === 'chicken' ||
-                    item.farm.category === 'pig')
-                );
-              const wrapperOpacity = isDimmedBySearch
-                ? 0.35
-                : isDimmedByHub
-                ? 0.38
-                : 1;
-
-              return (
-                <div
-                  key={`farm-ripple-${item.farm.id}`}
-                  ref={(el) => {
-                    if (el) {
-                      farmRippleRefs.current.set(item.farm.id, el);
-                    } else {
-                      farmRippleRefs.current.delete(item.farm.id);
-                    }
-                  }}
-                  className="pointer-events-none absolute top-0 left-0 will-change-transform"
-                  style={
-                    {
-                      display: 'none',
-                      opacity: wrapperOpacity,
-                      '--ripple-color': item.color,
-                      '--ripple-fill': hexToSoftRgba(item.color, 0.16),
-                      '--ripple-size': `${item.sizePx}px`,
-                    } as React.CSSProperties
-                  }
-                >
-                  <div
-                    className={`farm-ripple-ring ${
-                      item.isOther ? 'farm-ripple-ring--other' : ''
-                    }`}
-                  />
-                  <div
-                    className={`farm-ripple-ring farm-ripple-ring-delayed ${
-                      item.isOther ? 'farm-ripple-ring--other' : ''
-                    }`}
-                  />
-                </div>
-              );
-            })}
-          </div>
+        {stage === 'map' && (
+          <FarmRipplesOverlay
+            ripplePoints={ripplePoints}
+            normalizedQuery={normalizedQuery}
+            matchedFarmIds={matchedFarmIds}
+            isHubSelected={isHubSelected}
+            centralHubId={centralHub?.id}
+            farmRippleRefs={farmRippleRefs}
+            rippleLayerRef={rippleLayerRef}
+            onSyncAfterRender={handleRippleOverlayAfterRender}
+          />
         )}
 
         {/* Lớp đường nối nét đứt chạy một chiều (SVG CSS) từ FEED FACTORY */}
-        {stage === 'map' && showFactoryArcs && cachedArcGeometries.length > 0 && (
-          <div
-            className="pointer-events-none fixed inset-0 z-10 overflow-hidden"
-            aria-hidden="true"
-          >
-            <svg className="pointer-events-none absolute inset-0 h-full w-full">
-              {cachedArcGeometries.map((arc) => {
-                const activeHighlightId =
-                  hoveredArcId ||
-                  (selectedFarm && !isHubSelected ? selectedFarm.id : null);
-                const hasMultiHighlight =
-                  cachedArcGeometries.length > 1 &&
-                  activeHighlightId !== null &&
-                  cachedArcGeometries.some(
-                    (g) => g.farm.id === activeHighlightId
-                  );
-                const isHighlighted =
-                  hasMultiHighlight && arc.farm.id === activeHighlightId;
-                const isDimmed = hasMultiHighlight && !isHighlighted;
-
-                return (
-                  <path
-                    key={`arc-dash-${arc.farm.id}`}
-                    ref={(el) => {
-                      if (el) {
-                        arcPathRefs.current.set(arc.farm.id, el);
-                      } else {
-                        arcPathRefs.current.delete(arc.farm.id);
-                      }
-                    }}
-                    fill="none"
-                    stroke={arc.lineColor}
-                    strokeWidth={isHighlighted ? 2.8 : ARC_LINE_WEIGHT}
-                    strokeOpacity={isDimmed ? 0.3 : isHighlighted ? 1 : 0.8}
-                    strokeDasharray="8 10"
-                    strokeLinecap="round"
-                    className="supply-arc-dash-path pointer-events-none"
-                    style={{ display: 'none' }}
-                  />
-                );
-              })}
-            </svg>
-          </div>
+        {stage === 'map' && showFactoryArcs && (
+          <SupplyArcsOverlay
+            arcGeometries={cachedArcGeometries}
+            highlightedFarmId={highlightedArcFarmId}
+            arcPathRefs={arcPathRefs}
+            arcLayerRef={arcLayerRef}
+            onSyncAfterRender={handleArcOverlayAfterRender}
+          />
         )}
 
         {/* Tooltip tên trang trại + nhãn mô tả khi rê chuột vào icon hoặc tuyến đường cung ở Bản đồ 2D */}

@@ -217,6 +217,7 @@ export const APP_CONFIG = {
   customLabelsStorageKey: 'thaiviet_corp_custom_labels_v1',
   adminSessionStorageKey: 'thaiviet_corp_admin_session_v1',
   userPrefsStorageKey: 'thaiviet_corp_user_prefs_v1',
+  drivingDistancesStorageKey: 'thaiviet_corp_driving_distances_v1',
 
   // Danh sách từ khoá LOẠI TRỪ (không nối đường từ Nhà máy Trung tâm & không tự động gán icon Gà/Heo)
   arcExcludeKeywords: [
