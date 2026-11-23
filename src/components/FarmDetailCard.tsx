@@ -39,13 +39,45 @@ import {
   getDefaultLocationLabel,
   getFarmKey,
   getLocationDisplayLabel,
-  getStableFarmId,
   resolveFarmIconType,
 } from '../utils/icons';
 import { CountUp } from './CountUp';
 import { CuteCategoryIcon, PanelParticles } from './CursorSpotlight';
 
 export type MobileSheetSnap = 'collapsed' | 'half' | 'full';
+
+function extractExistingGoogleMapsUrl(
+  description?: string,
+  extendedData?: Record<string, string | undefined>
+): string | null {
+  const candidates: string[] = [];
+  if (description) candidates.push(description);
+  if (extendedData) {
+    for (const val of Object.values(extendedData)) {
+      if (val) candidates.push(val);
+    }
+  }
+  const regex =
+    /https?:\/\/(?:(?:www\.|maps\.)?google\.[a-z.]+\/maps[^\s"'<>]*|goo\.gl\/maps\/[^\s"'<>]+|maps\.app\.goo\.gl\/[^\s"'<>]+)/i;
+  for (const text of candidates) {
+    const match = text.match(regex);
+    if (match && match[0]) {
+      return match[0];
+    }
+  }
+  return null;
+}
+
+function buildGoogleMapsShareUrl(
+  lat: number,
+  lng: number,
+  description?: string,
+  extendedData?: Record<string, string | undefined>
+): string {
+  const existing = extractExistingGoogleMapsUrl(description, extendedData);
+  if (existing) return existing;
+  return `https://www.google.com/maps?q=${lat},${lng}`;
+}
 
 interface FarmDetailCardProps {
   farm: Farm;
@@ -162,32 +194,54 @@ export const FarmDetailCard: React.FC<FarmDetailCardProps> = ({
   const defaultAutoLabel = getDefaultLocationLabel(farm);
   const displayCategoryLabel = getLocationDisplayLabel(farm, customLabels);
 
-  const stableId = getStableFarmId(farm);
-  const deepLink = `${window.location.origin}${window.location.pathname}?p=${stableId}`;
-  const mapsLink = `https://www.google.com/maps?q=${farm.lat},${farm.lng}`;
-  const shareText = `${farm.name} – Thái Việt Corporation\nLoại: ${displayCategoryLabel}\nToạ độ: ${farm.lat.toFixed(6)}, ${farm.lng.toFixed(6)}\nGoogle Maps: ${mapsLink}\nXem trên bản đồ: ${deepLink}`;
+  const mapsLink = buildGoogleMapsShareUrl(
+    farm.lat,
+    farm.lng,
+    farm.description,
+    farm.extendedData
+  );
+  const shareText = `${farm.name}\nLoại: ${displayCategoryLabel}\nToạ độ: ${farm.lat.toFixed(6)}, ${farm.lng.toFixed(6)}\nGoogle Maps: ${mapsLink}`;
 
   const handleShare = () => {
-    if (navigator.share) {
-      navigator.share({
-        title: `${farm.name} – Thái Việt Corporation`,
-        text: shareText,
-        url: deepLink,
-      }).catch(() => {
-        setIsShareMenuOpen(true);
-      });
+    const isMobileDevice =
+      deviceMode === 'mobile-portrait' || deviceMode === 'mobile-landscape';
+    if (
+      isMobileDevice &&
+      typeof navigator !== 'undefined' &&
+      typeof navigator.share === 'function'
+    ) {
+      navigator
+        .share({
+          title: farm.name,
+          text: shareText,
+        })
+        .catch((err) => {
+          if (err && (err as Error).name === 'AbortError') return;
+          setIsShareMenuOpen(true);
+        });
     } else {
       setIsShareMenuOpen((prev) => !prev);
     }
   };
 
-  const copyToClipboard = (textToCopy: string, successMsg: string) => {
-    navigator.clipboard?.writeText(textToCopy).then(() => {
-      showShareToast(successMsg);
-      setIsShareMenuOpen(false);
-    }).catch(() => {
+  const copyToClipboard = (
+    textToCopy: string,
+    successMsg: string,
+    closeMenu = true
+  ) => {
+    if (!navigator.clipboard?.writeText) {
       showShareToast('Không thể sao chép');
-    });
+      return;
+    }
+    navigator.clipboard
+      .writeText(textToCopy)
+      .then(() => {
+        showShareToast(successMsg);
+        if (closeMenu) setIsShareMenuOpen(false);
+      })
+      .catch(() => {
+        showShareToast('Không thể sao chép');
+      });
   };
 
   useEffect(() => {
@@ -793,6 +847,11 @@ export const FarmDetailCard: React.FC<FarmDetailCardProps> = ({
               </button>
             )}
 
+            {shareToast && !isShareMenuOpen && (
+              <div className="rounded-xl bg-emerald-500 px-3 py-1.5 text-center text-xs font-bold text-white shadow-xs">
+                {shareToast}
+              </div>
+            )}
             <div className="relative flex gap-2">
               <button
                 type="button"
@@ -836,26 +895,19 @@ export const FarmDetailCard: React.FC<FarmDetailCardProps> = ({
                 </button>
                 <button
                   type="button"
-                  onClick={() => copyToClipboard(deepLink, 'Đã sao chép link web app!')}
-                  className="w-full text-left rounded-xl px-3 py-2 font-bold text-[#0f2a24] hover:bg-sky-50 transition-colors cursor-pointer flex items-center gap-2"
-                >
-                  <Copy className="h-3.5 w-3.5 text-[#10b981]" />
-                  <span>Sao chép link web</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => copyToClipboard(googleMapsDirectionsUrl, 'Đã sao chép link Google Maps!')}
+                  onClick={() => copyToClipboard(mapsLink, 'Đã sao chép link Google Maps!')}
                   className="w-full text-left rounded-xl px-3 py-2 font-bold text-[#0f2a24] hover:bg-sky-50 transition-colors cursor-pointer flex items-center gap-2"
                 >
                   <Copy className="h-3.5 w-3.5 text-[#f59e0b]" />
                   <span>Sao chép link Google Maps</span>
                 </button>
                 <div className="pt-1.5 border-t border-emerald-950/10 flex flex-wrap gap-1">
-                  <a href={`https://zalo.me/share?url=${encodeURIComponent(deepLink)}`} target="_blank" rel="noopener noreferrer" className="rounded-lg bg-blue-50 px-2 py-1 text-[10px] font-bold text-blue-600 hover:bg-blue-100">Zalo</a>
-                  <a href={`https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(deepLink)}`} target="_blank" rel="noopener noreferrer" className="rounded-lg bg-indigo-50 px-2 py-1 text-[10px] font-bold text-indigo-600 hover:bg-indigo-100">Facebook</a>
-                  <a href={`https://t.me/share/url?url=${encodeURIComponent(deepLink)}&text=${encodeURIComponent(shareText)}`} target="_blank" rel="noopener noreferrer" className="rounded-lg bg-sky-50 px-2 py-1 text-[10px] font-bold text-sky-600 hover:bg-sky-100">Telegram</a>
+                  <a href={`https://zalo.me/share?url=${encodeURIComponent(mapsLink)}`} target="_blank" rel="noopener noreferrer" className="rounded-lg bg-blue-50 px-2 py-1 text-[10px] font-bold text-blue-600 hover:bg-blue-100">Zalo</a>
+                  <a href="https://www.messenger.com/" target="_blank" rel="noopener noreferrer" onClick={() => copyToClipboard(shareText, 'Đã sao chép! Dán vào Messenger để gửi.', false)} className="rounded-lg bg-sky-50 px-2 py-1 text-[10px] font-bold text-sky-700 hover:bg-sky-100">Messenger</a>
+                  <a href={`https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(mapsLink)}&quote=${encodeURIComponent(shareText)}`} target="_blank" rel="noopener noreferrer" className="rounded-lg bg-indigo-50 px-2 py-1 text-[10px] font-bold text-indigo-600 hover:bg-indigo-100">Facebook</a>
+                  <a href={`https://t.me/share/url?url=${encodeURIComponent(mapsLink)}&text=${encodeURIComponent(shareText)}`} target="_blank" rel="noopener noreferrer" className="rounded-lg bg-sky-50 px-2 py-1 text-[10px] font-bold text-sky-600 hover:bg-sky-100">Telegram</a>
                   <a href={`https://api.whatsapp.com/send?text=${encodeURIComponent(shareText)}`} target="_blank" rel="noopener noreferrer" className="rounded-lg bg-emerald-50 px-2 py-1 text-[10px] font-bold text-emerald-600 hover:bg-emerald-100">WhatsApp</a>
-                  <a href={`mailto:?subject=${encodeURIComponent(`${farm.name} – Thái Việt Corporation`)}&body=${encodeURIComponent(shareText)}`} className="rounded-lg bg-rose-50 px-2 py-1 text-[10px] font-bold text-rose-600 hover:bg-rose-100">Email</a>
+                  <a href={`mailto:?subject=${encodeURIComponent(farm.name)}&body=${encodeURIComponent(shareText)}`} className="rounded-lg bg-rose-50 px-2 py-1 text-[10px] font-bold text-rose-600 hover:bg-rose-100">Email</a>
                 </div>
               </div>
             )}
@@ -937,31 +989,59 @@ export const HubDetailCard: React.FC<HubDetailCardProps> = ({
     setTimeout(() => setShareToast(''), 2000);
   };
 
-  const hubDeepLink = `${window.location.origin}${window.location.pathname}?p=feed-factory`;
+  const hubDisplayLabel = feedMillFarm
+    ? getLocationDisplayLabel(feedMillFarm, customLabels)
+    : 'Nhà máy cám';
+
   const googleMapsHubUrl = `https://www.google.com/maps/search/?api=1&query=${centralHub.lat},${centralHub.lng}`;
-  const shareHubText = `${centralHub.name} (FEED FACTORY) – Thái Việt Corporation\nLoại: Nhà máy cám\nToạ độ: ${centralHub.lat.toFixed(6)}, ${centralHub.lng.toFixed(6)}\nGoogle Maps: ${googleMapsHubUrl}\nXem trên bản đồ: ${hubDeepLink}`;
+  const mapsHubShareLink = buildGoogleMapsShareUrl(
+    centralHub.lat,
+    centralHub.lng,
+    feedMillFarm?.description || centralHub.address,
+    feedMillFarm?.extendedData
+  );
+  const shareHubText = `${centralHub.name}\nLoại: ${hubDisplayLabel}\nToạ độ: ${centralHub.lat.toFixed(6)}, ${centralHub.lng.toFixed(6)}\nGoogle Maps: ${mapsHubShareLink}`;
 
   const handleShareHub = () => {
-    if (navigator.share) {
-      navigator.share({
-        title: `${centralHub.name} – Thái Việt Corporation`,
-        text: shareHubText,
-        url: hubDeepLink,
-      }).catch(() => {
-        setIsShareMenuOpen(true);
-      });
+    const isMobileDevice =
+      deviceMode === 'mobile-portrait' || deviceMode === 'mobile-landscape';
+    if (
+      isMobileDevice &&
+      typeof navigator !== 'undefined' &&
+      typeof navigator.share === 'function'
+    ) {
+      navigator
+        .share({
+          title: centralHub.name,
+          text: shareHubText,
+        })
+        .catch((err) => {
+          if (err && (err as Error).name === 'AbortError') return;
+          setIsShareMenuOpen(true);
+        });
     } else {
       setIsShareMenuOpen((prev) => !prev);
     }
   };
 
-  const copyHubToClipboard = (textToCopy: string, successMsg: string) => {
-    navigator.clipboard?.writeText(textToCopy).then(() => {
-      showShareToast(successMsg);
-      setIsShareMenuOpen(false);
-    }).catch(() => {
+  const copyHubToClipboard = (
+    textToCopy: string,
+    successMsg: string,
+    closeMenu = true
+  ) => {
+    if (!navigator.clipboard?.writeText) {
       showShareToast('Không thể sao chép');
-    });
+      return;
+    }
+    navigator.clipboard
+      .writeText(textToCopy)
+      .then(() => {
+        showShareToast(successMsg);
+        if (closeMenu) setIsShareMenuOpen(false);
+      })
+      .catch(() => {
+        showShareToast('Không thể sao chép');
+      });
   };
 
   const currentArcColors = arcColors || {
@@ -986,10 +1066,6 @@ export const HubDetailCard: React.FC<HubDetailCardProps> = ({
     { name: 'Đại dương', chicken: { from: '#3B82F6', to: '#14B8A6' }, pig: { from: '#14B8A6', to: '#10B981' } },
     { name: 'Rừng xanh', chicken: { from: '#10B981', to: '#FACC15' }, pig: { from: '#14B8A6', to: '#3B82F6' } },
   ];
-
-  const hubDisplayLabel = feedMillFarm
-    ? getLocationDisplayLabel(feedMillFarm, customLabels)
-    : 'Nhà máy cám';
 
   const handleCommitHubLabel = async (nextVal: string) => {
     if (!feedMillFarm || !onSaveCustomLabel || isSavingLabel) return;
@@ -1595,26 +1671,19 @@ export const HubDetailCard: React.FC<HubDetailCardProps> = ({
                 </button>
                 <button
                   type="button"
-                  onClick={() => copyHubToClipboard(hubDeepLink, 'Đã sao chép link web app!')}
-                  className="w-full text-left rounded-xl px-3 py-2 font-bold text-[#0f2a24] hover:bg-sky-50 transition-colors cursor-pointer flex items-center gap-2"
-                >
-                  <Copy className="h-3.5 w-3.5 text-[#10b981]" />
-                  <span>Sao chép link web</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => copyHubToClipboard(googleMapsHubUrl, 'Đã sao chép link Google Maps!')}
+                  onClick={() => copyHubToClipboard(mapsHubShareLink, 'Đã sao chép link Google Maps!')}
                   className="w-full text-left rounded-xl px-3 py-2 font-bold text-[#0f2a24] hover:bg-sky-50 transition-colors cursor-pointer flex items-center gap-2"
                 >
                   <Copy className="h-3.5 w-3.5 text-[#f59e0b]" />
                   <span>Sao chép link Google Maps</span>
                 </button>
                 <div className="pt-1.5 border-t border-emerald-950/10 flex flex-wrap gap-1">
-                  <a href={`https://zalo.me/share?url=${encodeURIComponent(hubDeepLink)}`} target="_blank" rel="noopener noreferrer" className="rounded-lg bg-blue-50 px-2 py-1 text-[10px] font-bold text-blue-600 hover:bg-blue-100">Zalo</a>
-                  <a href={`https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(hubDeepLink)}`} target="_blank" rel="noopener noreferrer" className="rounded-lg bg-indigo-50 px-2 py-1 text-[10px] font-bold text-indigo-600 hover:bg-indigo-100">Facebook</a>
-                  <a href={`https://t.me/share/url?url=${encodeURIComponent(hubDeepLink)}&text=${encodeURIComponent(shareHubText)}`} target="_blank" rel="noopener noreferrer" className="rounded-lg bg-sky-50 px-2 py-1 text-[10px] font-bold text-sky-600 hover:bg-sky-100">Telegram</a>
+                  <a href={`https://zalo.me/share?url=${encodeURIComponent(mapsHubShareLink)}`} target="_blank" rel="noopener noreferrer" className="rounded-lg bg-blue-50 px-2 py-1 text-[10px] font-bold text-blue-600 hover:bg-blue-100">Zalo</a>
+                  <a href="https://www.messenger.com/" target="_blank" rel="noopener noreferrer" onClick={() => copyHubToClipboard(shareHubText, 'Đã sao chép! Dán vào Messenger để gửi.', false)} className="rounded-lg bg-sky-50 px-2 py-1 text-[10px] font-bold text-sky-700 hover:bg-sky-100">Messenger</a>
+                  <a href={`https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(mapsHubShareLink)}&quote=${encodeURIComponent(shareHubText)}`} target="_blank" rel="noopener noreferrer" className="rounded-lg bg-indigo-50 px-2 py-1 text-[10px] font-bold text-indigo-600 hover:bg-indigo-100">Facebook</a>
+                  <a href={`https://t.me/share/url?url=${encodeURIComponent(mapsHubShareLink)}&text=${encodeURIComponent(shareHubText)}`} target="_blank" rel="noopener noreferrer" className="rounded-lg bg-sky-50 px-2 py-1 text-[10px] font-bold text-sky-600 hover:bg-sky-100">Telegram</a>
                   <a href={`https://api.whatsapp.com/send?text=${encodeURIComponent(shareHubText)}`} target="_blank" rel="noopener noreferrer" className="rounded-lg bg-emerald-50 px-2 py-1 text-[10px] font-bold text-emerald-600 hover:bg-emerald-100">WhatsApp</a>
-                  <a href={`mailto:?subject=${encodeURIComponent(`${centralHub.name} – Thái Việt Corporation`)}&body=${encodeURIComponent(shareHubText)}`} className="rounded-lg bg-rose-50 px-2 py-1 text-[10px] font-bold text-rose-600 hover:bg-rose-100">Email</a>
+                  <a href={`mailto:?subject=${encodeURIComponent(centralHub.name)}&body=${encodeURIComponent(shareHubText)}`} className="rounded-lg bg-rose-50 px-2 py-1 text-[10px] font-bold text-rose-600 hover:bg-rose-100">Email</a>
                 </div>
               </div>
             )}

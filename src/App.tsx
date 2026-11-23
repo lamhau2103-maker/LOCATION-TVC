@@ -32,7 +32,6 @@ import {
   findFeedMill,
   getFarmKey,
   getLocationDisplayLabel,
-  getStableFarmId,
   isConnectableFarm,
   resolveFarmIconType,
   resolveFarmSubType,
@@ -621,53 +620,6 @@ export default function App() {
         : null,
     [farms, selectedFarmId]
   );
-
-  // Xử lý deep link (?p=...) khi khởi động
-  useEffect(() => {
-    try {
-      const params = new URLSearchParams(window.location.search);
-      const p = params.get('p');
-      if (p) {
-        setStage('map');
-        if (p === 'feed-factory') {
-          setIsHubSelected(true);
-          setTimeout(() => {
-            mapSceneRef.current?.flyToHub();
-          }, 400);
-        } else {
-          const found = farms.find((f) => getStableFarmId(f) === p || f.id === p);
-          if (found) {
-            setSelectedFarmId(found.id);
-            setSingleArcFarmId(null);
-            setTimeout(() => {
-              mapSceneRef.current?.flyToFarm(found, 15.8);
-            }, 400);
-          }
-        }
-      }
-    } catch {
-      // ignore
-    }
-  }, [farms]);
-
-  // Cập nhật query parameter ?p=... trên URL khi chọn/đóng điểm
-  useEffect(() => {
-    try {
-      const url = new URL(window.location.href);
-      if (selectedFarm) {
-        url.searchParams.set('p', getStableFarmId(selectedFarm));
-        window.history.replaceState(null, '', url.toString());
-      } else if (isHubSelected && centralHub) {
-        url.searchParams.set('p', 'feed-factory');
-        window.history.replaceState(null, '', url.toString());
-      } else {
-        url.searchParams.delete('p');
-        window.history.replaceState(null, '', url.toString());
-      }
-    } catch {
-      // ignore
-    }
-  }, [selectedFarm, isHubSelected, centralHub]);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [activeCategories, setActiveCategories] = useState<

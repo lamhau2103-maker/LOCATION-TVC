@@ -1569,12 +1569,3 @@ export function sortLocationsForDropdown<T extends DropdownLocationItem>(
       });
     });
 }
-
-export function getStableFarmId(farm: { id?: string; name?: string; lat: number; lng: number }): string {
-  const normName = normalizeMatchText(farm.name || 'diem')
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-  return `${normName}-${Number(farm.lat).toFixed(3)}-${Number(farm.lng).toFixed(3)}`;
-}
-
-
