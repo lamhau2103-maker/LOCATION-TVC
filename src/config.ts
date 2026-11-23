@@ -67,7 +67,7 @@ export const PRESET_LOCATION_LABELS: string[] = [
 
 export const APP_CONFIG = {
   companyName: 'Công Ty Cổ Phần Thái Việt Corporation',
-  documentTitle: 'Thái Việt Corporation - Hệ Thống Trang Trại 3D',
+  documentTitle: 'LOCATION THAI VIET CORPORATION',
   companyTagline: 'HỆ THỐNG TRANG TRẠI CHĂN NUÔI SINH THÁI & AN TOÀN SINH HỌC 3D',
   companyVersion: 'NỀN TẢNG BẢN ĐỒ ĐỊA HÌNH 3D & ĐỒNG BỘ GOOGLE MY MAPS',
 
