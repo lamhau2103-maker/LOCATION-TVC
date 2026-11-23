@@ -23,6 +23,7 @@ import {
   APP_CONFIG,
   getCategoryConfig,
   PRESET_LOCATION_LABELS,
+  RESPONSIVE_BREAKPOINTS,
 } from '../config';
 import {
   CentralHub,
@@ -63,27 +64,33 @@ interface FarmDetailCardProps {
 }
 
 function useDeviceCardMode() {
-  const [mode, setMode] = useState<
-    'desktop' | 'tablet-portrait' | 'mobile-portrait' | 'mobile-landscape'
-  >(() => {
-    if (typeof window === 'undefined') return 'desktop';
+  const resolveMode = () => {
+    if (typeof window === 'undefined') return 'desktop' as const;
     const w = window.innerWidth;
     const h = window.innerHeight;
-    if (h < 500 && w > h) return 'mobile-landscape';
-    if (w < 640) return 'mobile-portrait';
-    if (w < 1024 && h >= w) return 'tablet-portrait';
-    return 'desktop';
-  });
+    if (h < RESPONSIVE_BREAKPOINTS.landscapeShortMaxHeight && w > h) {
+      return 'mobile-landscape' as const;
+    }
+    if (w <= RESPONSIVE_BREAKPOINTS.mobileMax) return 'mobile-portrait' as const;
+    if (w <= RESPONSIVE_BREAKPOINTS.tabletMax && h >= w) {
+      return 'tablet-portrait' as const;
+    }
+    if (w <= RESPONSIVE_BREAKPOINTS.tabletMax && w > h) {
+      return 'tablet-landscape' as const;
+    }
+    return 'desktop' as const;
+  };
+
+  const [mode, setMode] = useState<
+    | 'desktop'
+    | 'tablet-landscape'
+    | 'tablet-portrait'
+    | 'mobile-portrait'
+    | 'mobile-landscape'
+  >(resolveMode);
 
   useEffect(() => {
-    const update = () => {
-      const w = window.innerWidth;
-      const h = window.innerHeight;
-      if (h < 500 && w > h) setMode('mobile-landscape');
-      else if (w < 640) setMode('mobile-portrait');
-      else if (w < 1024 && h >= w) setMode('tablet-portrait');
-      else setMode('desktop');
-    };
+    const update = () => setMode(resolveMode());
     window.addEventListener('resize', update);
     window.addEventListener('orientationchange', update);
     return () => {
@@ -245,15 +252,17 @@ export const FarmDetailCard: React.FC<FarmDetailCardProps> = ({
       )
     : [];
 
-  // Tính class định vị & chiều cao tối đa theo thiết bị
+  // Tính class định vị & chiều cao tối đa theo thiết bị (320px -> 4K)
   const wrapperClass =
     deviceMode === 'mobile-landscape'
-      ? 'pointer-events-auto fixed top-2 right-2 bottom-2 z-30 flex w-[320px] flex-col'
+      ? 'pointer-events-auto fixed top-2 right-2 bottom-2 z-30 flex w-[min(320px,44vw)] flex-col'
       : deviceMode === 'mobile-portrait'
       ? 'pointer-events-auto fixed inset-x-0 bottom-0 z-30 mx-auto flex w-full flex-col px-2 pb-[calc(var(--safe-bottom)+8px)]'
       : deviceMode === 'tablet-portrait'
       ? 'pointer-events-auto fixed inset-x-0 bottom-0 z-30 mx-auto flex w-full max-w-xl flex-col px-3 pb-[calc(var(--safe-bottom)+12px)]'
-      : 'pointer-events-auto fixed right-4 bottom-4 z-30 flex w-[clamp(320px,28vw,420px)] flex-col';
+      : deviceMode === 'tablet-landscape'
+      ? 'pointer-events-auto fixed right-3 bottom-3 z-30 flex w-[clamp(320px,36vw,380px)] flex-col'
+      : 'pointer-events-auto fixed right-4 bottom-4 z-30 flex w-[clamp(340px,28vw,420px)] flex-col';
 
   const cardMaxHeightStyle: React.CSSProperties =
     deviceMode === 'mobile-landscape'
@@ -262,13 +271,13 @@ export const FarmDetailCard: React.FC<FarmDetailCardProps> = ({
       ? {
           maxHeight:
             mobileSheetSnap === 'collapsed'
-              ? '29dvh'
+              ? '28dvh'
               : mobileSheetSnap === 'half'
-              ? '56dvh'
-              : '88dvh',
+              ? '55dvh'
+              : '86dvh',
         }
       : deviceMode === 'tablet-portrait'
-      ? { maxHeight: '60dvh' }
+      ? { maxHeight: '56dvh' }
       : { maxHeight: 'calc(100dvh - 32px)' };
 
   const isCollapsedMobile =
@@ -404,13 +413,14 @@ export const FarmDetailCard: React.FC<FarmDetailCardProps> = ({
               </span>
             </div>
 
-            <div className="flex items-center gap-1">
+            <div className="flex shrink-0 items-center gap-1">
               {onPrevFarm && (
                 <button
                   type="button"
                   onClick={onPrevFarm}
                   title="Trang trại trước"
-                  className="flex h-9 w-9 items-center justify-center rounded-full border border-emerald-950/10 bg-white/90 text-[#0f2a24] shadow-xs transition-colors hover:border-[#2b8fd0] hover:text-[#2b8fd0] cursor-pointer"
+                  aria-label="Trang trại trước"
+                  className="flex h-10 w-10 items-center justify-center rounded-full border border-emerald-950/10 bg-white/90 text-[#0f2a24] shadow-xs transition-colors hover:border-[#2b8fd0] hover:text-[#2b8fd0] cursor-pointer sm:h-9 sm:w-9"
                 >
                   <ChevronLeft className="h-4 w-4" />
                 </button>
@@ -420,7 +430,8 @@ export const FarmDetailCard: React.FC<FarmDetailCardProps> = ({
                   type="button"
                   onClick={onNextFarm}
                   title="Trang trại tiếp theo"
-                  className="flex h-9 w-9 items-center justify-center rounded-full border border-emerald-950/10 bg-white/90 text-[#0f2a24] shadow-xs transition-colors hover:border-[#2b8fd0] hover:text-[#2b8fd0] cursor-pointer"
+                  aria-label="Trang trại tiếp theo"
+                  className="flex h-10 w-10 items-center justify-center rounded-full border border-emerald-950/10 bg-white/90 text-[#0f2a24] shadow-xs transition-colors hover:border-[#2b8fd0] hover:text-[#2b8fd0] cursor-pointer sm:h-9 sm:w-9"
                 >
                   <ChevronRight className="h-4 w-4" />
                 </button>
@@ -430,7 +441,7 @@ export const FarmDetailCard: React.FC<FarmDetailCardProps> = ({
                 onClick={onClose}
                 title="Đóng thẻ thông tin"
                 aria-label="Đóng thẻ thông tin"
-                className="ml-0.5 flex h-9 w-9 items-center justify-center rounded-full border border-emerald-950/10 bg-white/90 text-[#0f2a24] shadow-xs transition-colors hover:border-[#d9261c] hover:bg-rose-50 hover:text-[#d9261c] cursor-pointer"
+                className="ml-0.5 flex h-10 w-10 items-center justify-center rounded-full border border-emerald-950/10 bg-white/90 text-[#0f2a24] shadow-xs transition-colors hover:border-[#d9261c] hover:bg-rose-50 hover:text-[#d9261c] cursor-pointer sm:h-9 sm:w-9"
               >
                 <X className="h-4 w-4" />
               </button>
@@ -457,7 +468,7 @@ export const FarmDetailCard: React.FC<FarmDetailCardProps> = ({
             </motion.div>
 
             <div className="min-w-0 flex-1">
-              <h2 className="font-display line-clamp-2 text-base font-extrabold leading-snug tracking-tight text-[#0f2a24] sm:text-lg">
+              <h2 className="font-display line-clamp-2 break-words text-[clamp(0.95rem,2.4vw,1.125rem)] font-extrabold leading-snug tracking-tight text-[#0f2a24]">
                 {farm.name}
               </h2>
               {farm.type && !isCollapsedMobile && (
@@ -517,7 +528,7 @@ export const FarmDetailCard: React.FC<FarmDetailCardProps> = ({
                     }
                   }}
                   placeholder="Nhập nhãn mô tả tùy chỉnh..."
-                  className="min-w-0 flex-1 rounded-xl border border-[#2b8fd0]/35 bg-white px-2.5 py-1.5 text-xs font-semibold text-[#0f2a24] focus:border-[#2b8fd0] focus:outline-none"
+                  className="min-w-0 flex-1 rounded-xl border border-[#2b8fd0]/35 bg-white px-2.5 py-1.5 text-[16px] font-semibold text-[#0f2a24] focus:border-[#2b8fd0] focus:outline-none sm:text-xs"
                 />
                 <button
                   type="button"
@@ -542,12 +553,14 @@ export const FarmDetailCard: React.FC<FarmDetailCardProps> = ({
         {/* PHẦN NỘI DUNG CUỘN DỌC BÊN TRONG (Ẩn khi ở nấc thu gọn 28% trên mobile dọc) */}
         {!isCollapsedMobile && (
           <div className="relative z-10 flex-1 overflow-y-auto px-4 py-3.5 sm:px-5">
-            {/* Hiển thị ảnh trang trại nếu dữ liệu có */}
+            {/* Hiển thị ảnh trang trại nếu dữ liệu có (lazy-load tối ưu mobile) */}
             {farm.imageUrl && !imageError && (
               <div className="relative mb-3.5 h-36 w-full overflow-hidden rounded-2xl border border-emerald-950/10 bg-emerald-50">
                 <img
                   src={farm.imageUrl}
                   alt={farm.name}
+                  loading="lazy"
+                  decoding="async"
                   referrerPolicy="no-referrer"
                   onError={() => setImageError(true)}
                   className="h-full w-full object-cover"
@@ -624,7 +637,7 @@ export const FarmDetailCard: React.FC<FarmDetailCardProps> = ({
 
             {/* Mô tả chi tiết */}
             {farm.description && (
-              <p className="mb-3.5 whitespace-pre-line text-xs font-medium leading-relaxed text-[#0f2a24]/80 sm:text-sm">
+              <p className="mb-3.5 break-words whitespace-pre-line text-xs font-medium leading-relaxed text-[#0f2a24]/80 sm:text-sm">
                 {farm.description}
               </p>
             )}
@@ -889,12 +902,14 @@ export const HubDetailCard: React.FC<HubDetailCardProps> = ({
 
   const wrapperClass =
     deviceMode === 'mobile-landscape'
-      ? 'pointer-events-auto fixed top-2 right-2 bottom-2 z-30 flex w-[320px] flex-col'
+      ? 'pointer-events-auto fixed top-2 right-2 bottom-2 z-30 flex w-[min(320px,44vw)] flex-col'
       : deviceMode === 'mobile-portrait'
       ? 'pointer-events-auto fixed inset-x-0 bottom-0 z-30 mx-auto flex w-full flex-col px-2 pb-[calc(var(--safe-bottom)+8px)]'
       : deviceMode === 'tablet-portrait'
       ? 'pointer-events-auto fixed inset-x-0 bottom-0 z-30 mx-auto flex w-full max-w-xl flex-col px-3 pb-[calc(var(--safe-bottom)+12px)]'
-      : 'pointer-events-auto fixed right-4 bottom-4 z-30 flex w-[clamp(320px,28vw,420px)] flex-col';
+      : deviceMode === 'tablet-landscape'
+      ? 'pointer-events-auto fixed right-3 bottom-3 z-30 flex w-[clamp(320px,36vw,380px)] flex-col'
+      : 'pointer-events-auto fixed right-4 bottom-4 z-30 flex w-[clamp(340px,28vw,420px)] flex-col';
 
   const cardMaxHeightStyle: React.CSSProperties =
     deviceMode === 'mobile-landscape'
@@ -903,13 +918,13 @@ export const HubDetailCard: React.FC<HubDetailCardProps> = ({
       ? {
           maxHeight:
             mobileSheetSnap === 'collapsed'
-              ? '29dvh'
+              ? '28dvh'
               : mobileSheetSnap === 'half'
-              ? '56dvh'
-              : '88dvh',
+              ? '55dvh'
+              : '86dvh',
         }
       : deviceMode === 'tablet-portrait'
-      ? { maxHeight: '60dvh' }
+      ? { maxHeight: '56dvh' }
       : { maxHeight: 'calc(100dvh - 32px)' };
 
   const isCollapsedMobile =
@@ -1078,7 +1093,7 @@ export const HubDetailCard: React.FC<HubDetailCardProps> = ({
                     }
                   }}
                   placeholder="Nhập nhãn mô tả..."
-                  className="min-w-0 flex-1 rounded-xl border border-[#2b8fd0]/35 bg-white px-2.5 py-1.5 text-xs font-semibold text-[#0f2a24] focus:border-[#2b8fd0] focus:outline-none"
+                  className="min-w-0 flex-1 rounded-xl border border-[#2b8fd0]/35 bg-white px-2.5 py-1.5 text-[16px] font-semibold text-[#0f2a24] focus:border-[#2b8fd0] focus:outline-none sm:text-xs"
                 />
                 <button
                   type="button"
@@ -1128,7 +1143,7 @@ export const HubDetailCard: React.FC<HubDetailCardProps> = ({
         {!isCollapsedMobile && (
           <div className="relative z-10 flex-1 overflow-y-auto px-4 py-3.5 sm:px-5">
             {centralHub.address && (
-              <p className="mb-3 text-xs font-semibold text-[#0f2a24]/80">
+              <p className="mb-3 break-words text-xs font-semibold text-[#0f2a24]/80">
                 Địa chỉ: {centralHub.address}
               </p>
             )}

@@ -10,9 +10,16 @@ import * as maplibregl from 'maplibre-gl';
 import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
 import Globe, { GlobeInstance } from 'globe.gl';
 import * as THREE from 'three';
-import { Map as MapIcon, Mountain, Satellite } from 'lucide-react';
+import { Map as MapIcon, Minus, Mountain, Plus, Satellite } from 'lucide-react';
 import { motion } from 'framer-motion';
-import { APP_CONFIG, getCategoryConfig } from '../config';
+import {
+  APP_CONFIG,
+  ARC_LINE_WEIGHT,
+  getCategoryConfig,
+  MAP_TILE_PRELOAD_CONFIG,
+  MAP_ZOOM_CONFIG,
+  RESPONSIVE_BREAKPOINTS,
+} from '../config';
 import {
   AppStage,
   CentralHub,
@@ -113,7 +120,7 @@ const GLOBE_EARTH_TEXTURE_URL =
 const GLOBE_BUMP_TEXTURE_URL =
   'https://unpkg.com/three-globe/example/img/earth-topology.png';
 
-const BASEMAP_CANVAS_BG = '#f2efe9';
+const BASEMAP_CANVAS_BG = MAP_TILE_PRELOAD_CONFIG.groundColorStreet;
 
 try {
   if (typeof maplibregl.setWorkerUrl === 'function' && maplibreWorkerUrl) {
@@ -126,9 +133,30 @@ try {
 function getOptimalPixelRatio(isLite: boolean): number {
   if (typeof window === 'undefined') return 1;
   const dpr = window.devicePixelRatio || 1;
-  // Giữ độ nét Retina thực sự cho cả điện thoại (tối đa 2x) và laptop (tối đa 2.5x)
-  // Tránh ép xuống 1x hoặc hệ số lẻ 1.75 làm mờ icon 2D khi thu phóng trên màn hình HiDPI
   return isLite ? Math.min(dpr, 2) : Math.min(dpr, 2.5);
+}
+
+/**
+ * Tính độ cao camera Quả địa cầu 3D theo tỷ lệ khung hình để trên điện thoại dọc (360x640, 390x844...)
+ * Quả địa cầu luôn nằm giữa màn hình và KHÔNG BAO GIỜ bị cắt hai bên rìa ngang.
+ */
+function getResponsiveGlobeAltitude(): number {
+  if (typeof window === 'undefined') return 1.75;
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+  if (w < h) {
+    const aspect = Math.max(w / Math.max(h, 1), 0.48);
+    return Math.min(2.65, Math.max(1.9, 1.48 / aspect));
+  }
+  if (h < RESPONSIVE_BREAKPOINTS.landscapeShortMaxHeight) {
+    return 1.95;
+  }
+  return 1.75;
+}
+
+function getArcDeviceScale(): number {
+  if (typeof window === 'undefined') return 1;
+  return window.innerWidth <= RESPONSIVE_BREAKPOINTS.mobileMax ? 0.85 : 1;
 }
 
 /**
@@ -140,8 +168,13 @@ function getDeviceSizeFactor(): number {
   if (typeof window === 'undefined') return 1;
   const w = window.innerWidth;
   const h = window.innerHeight;
-  if (w < 640 || h < 500) return 0.88;
-  if (w < 1024) return 0.94;
+  if (
+    w <= RESPONSIVE_BREAKPOINTS.mobileMax ||
+    h < RESPONSIVE_BREAKPOINTS.landscapeShortMaxHeight
+  ) {
+    return 0.88;
+  }
+  if (w <= RESPONSIVE_BREAKPOINTS.tabletMax) return 0.94;
   return 1.0;
 }
 
@@ -159,7 +192,7 @@ function computeCameraPadding(
   const w = window.innerWidth;
   const h = window.innerHeight;
 
-  if (h < 500 && w > h) {
+  if (h < RESPONSIVE_BREAKPOINTS.landscapeShortMaxHeight && w > h) {
     return {
       top: 44,
       right: Math.min(330, Math.round(w * 0.44)),
@@ -168,13 +201,13 @@ function computeCameraPadding(
     };
   }
 
-  if (w < 640) {
+  if (w <= RESPONSIVE_BREAKPOINTS.mobileMax) {
     const ratio =
       mobileSheetSnap === 'collapsed'
         ? 0.28
         : mobileSheetSnap === 'full'
         ? 0.65
-        : 0.5;
+        : 0.54;
     return {
       top: 58,
       right: 16,
@@ -183,16 +216,19 @@ function computeCameraPadding(
     };
   }
 
-  if (w < 1024 && h > w) {
+  if (w <= RESPONSIVE_BREAKPOINTS.tabletMax && h >= w) {
     return {
       top: 72,
       right: 24,
-      bottom: Math.min(Math.round(h * 0.46), h - 160),
+      bottom: Math.min(Math.round(h * 0.48), h - 160),
       left: 24,
     };
   }
 
-  const cardWidth = Math.max(320, Math.min(420, Math.round(w * 0.28)));
+  const cardWidth =
+    w <= RESPONSIVE_BREAKPOINTS.tabletMax
+      ? Math.max(320, Math.min(380, Math.round(w * 0.36)))
+      : Math.max(320, Math.min(420, Math.round(w * 0.28)));
   return {
     top: 72,
     right: cardWidth + 28,
@@ -201,91 +237,39 @@ function computeCameraPadding(
   };
 }
 
-/**
- * Nền Bản đồ Đường phố 2D (Raster tile 100% miễn phí, không API Key):
- * - Mặc định OpenStreetMap chuẩn (rõ quốc lộ, đường nhỏ, sông hồ, công viên xanh, tên địa danh ở zoom 8, 12, 16+)
- * - Hỗ trợ Carto Voyager (chỉ bật khi probe xác nhận không trả ảnh lỗi "API KEY REQUIRED" 2049 bytes)
- * - Tự động dự phòng Esri World Street Map nếu OSM gặp lỗi tải tile
- */
-function createStreetBaseStyle(
-  provider: StreetBasemapProvider
-): maplibregl.StyleSpecification {
-  if (provider === 'carto') {
-    return {
-      version: 8,
-      name: 'ThaiViet Street Carto Voyager',
-      glyphs: OPENFREEMAP_GLYPHS_URL,
-      sources: {
-        'carto-voyager': {
-          type: 'raster',
-          tiles: getCartoVoyagerTiles(),
-          tileSize: 256,
-          maxzoom: 19,
-          attribution: '© OpenStreetMap contributors © CARTO',
-        },
-      },
-      layers: [
-        {
-          id: 'basemap-ground-bg',
-          type: 'background',
-          paint: {
-            'background-color': BASEMAP_CANVAS_BG,
-          },
-        },
-        {
-          id: 'carto-voyager-base',
-          type: 'raster',
-          source: 'carto-voyager',
-          paint: {
-            'raster-opacity': 1,
-            'raster-fade-duration': 150,
-          },
-        },
-      ],
-    };
-  }
+function getGroundColorForMode(mode: MapStyleMode): string {
+  if (mode === 'satellite') return MAP_TILE_PRELOAD_CONFIG.groundColorSatellite;
+  if (mode === 'terrain') return MAP_TILE_PRELOAD_CONFIG.groundColorTerrain;
+  return MAP_TILE_PRELOAD_CONFIG.groundColorStreet;
+}
 
-  if (provider === 'esri-street') {
-    return {
-      version: 8,
-      name: 'ThaiViet Street Esri',
-      glyphs: OPENFREEMAP_GLYPHS_URL,
-      sources: {
-        'esri-world-street': {
-          type: 'raster',
-          tiles: ESRI_STREET_TILES,
-          tileSize: 256,
-          maxzoom: 18,
-          attribution:
-            'Tiles © Esri — Esri, DeLorme, NAVTEQ, USGS, Intermap, iPC, NRCAN, Esri Japan, METI, Esri China, TomTom',
-        },
-      },
-      layers: [
-        {
-          id: 'basemap-ground-bg',
-          type: 'background',
-          paint: {
-            'background-color': BASEMAP_CANVAS_BG,
-          },
-        },
-        {
-          id: 'esri-street-base',
-          type: 'raster',
-          source: 'esri-world-street',
-          paint: {
-            'raster-opacity': 1,
-            'raster-fade-duration': 150,
-          },
-        },
-      ],
-    };
-  }
+/**
+ * TẠO DUY NHẤT MỘT STYLE NỀN TÍCH HỢP CỐ ĐỊNH (KHÔNG BAO GIỜ gọi lại map.setStyle() khi đổi nền/zoom)
+ * - Giữ toàn bộ nguồn raster Đường (Esri Street dự phòng bên dưới + OpenStreetMap), Địa hình (Esri Topo) và Vệ tinh (Esri Imagery)
+ * - Khi đổi nền chỉ cross-fade `raster-opacity` trong 320ms nên KHÔNG BAO GIỜ mất tile cache hay chớp trắng/xám!
+ */
+function createUnifiedBasemapStyle(
+  initialMode: MapStyleMode,
+  satelliteMaxZoom = 18
+): maplibregl.StyleSpecification {
+  const crossfadeTransition = {
+    duration: MAP_TILE_PRELOAD_CONFIG.basemapCrossfadeMs,
+    delay: 0,
+  };
+  const rasterFade = MAP_TILE_PRELOAD_CONFIG.rasterFadeDurationMs;
 
   return {
     version: 8,
-    name: 'ThaiViet 2D OpenStreetMap',
+    name: 'ThaiViet Unified Zero-Flicker Basemap',
     glyphs: OPENFREEMAP_GLYPHS_URL,
     sources: {
+      'esri-world-street': {
+        type: 'raster',
+        tiles: ESRI_STREET_TILES,
+        tileSize: 256,
+        maxzoom: 18,
+        attribution: 'Tiles © Esri — World Street Map',
+      },
       'osm-standard': {
         type: 'raster',
         tiles: OSM_STANDARD_TILES,
@@ -293,37 +277,6 @@ function createStreetBaseStyle(
         maxzoom: 19,
         attribution: '© OpenStreetMap contributors',
       },
-    },
-    layers: [
-      {
-        id: 'basemap-ground-bg',
-        type: 'background',
-        paint: {
-          'background-color': BASEMAP_CANVAS_BG,
-        },
-      },
-      {
-        id: 'osm-standard-base',
-        type: 'raster',
-        source: 'osm-standard',
-        paint: {
-          'raster-opacity': 1,
-          'raster-fade-duration': 150,
-        },
-      },
-    ],
-  };
-}
-
-/**
- * Nền Bản đồ Địa hình (Esri World Topo Map — nổi khối đồi núi, cây xanh, sông hồ, đường quốc lộ & ranh giới, miễn phí 100%)
- */
-function createTerrainBaseStyle(): maplibregl.StyleSpecification {
-  return {
-    version: 8,
-    name: 'ThaiViet Terrain Topo',
-    glyphs: OPENFREEMAP_GLYPHS_URL,
-    sources: {
       'esri-world-topo': {
         type: 'raster',
         tiles: [ESRI_TERRAIN_TOPO_TILES],
@@ -332,39 +285,6 @@ function createTerrainBaseStyle(): maplibregl.StyleSpecification {
         attribution:
           'Tiles © Esri — Esri World Topo Map, OpenStreetMap & GIS Community',
       },
-    },
-    layers: [
-      {
-        id: 'basemap-ground-bg',
-        type: 'background',
-        paint: {
-          'background-color': '#e8efe2',
-        },
-      },
-      {
-        id: 'esri-terrain-base',
-        type: 'raster',
-        source: 'esri-world-topo',
-        paint: {
-          'raster-opacity': 1,
-          'raster-fade-duration': 150,
-        },
-      },
-    ],
-  };
-}
-
-/**
- * Nền Bản đồ Vệ tinh Esri World Imagery (miễn phí 100%, không cần API Key, không phủ mờ)
- */
-function createSatelliteBaseStyle(
-  satelliteMaxZoom = 18
-): maplibregl.StyleSpecification {
-  return {
-    version: 8,
-    name: 'ThaiViet Satellite 2D',
-    glyphs: OPENFREEMAP_GLYPHS_URL,
-    sources: {
       'esri-world-imagery': {
         type: 'raster',
         tiles: [ESRI_SATELLITE_TILES],
@@ -379,7 +299,39 @@ function createSatelliteBaseStyle(
         id: 'basemap-ground-bg',
         type: 'background',
         paint: {
-          'background-color': '#1e293b',
+          'background-color': getGroundColorForMode(initialMode),
+          'background-color-transition': crossfadeTransition,
+        },
+      },
+      // Lớp nền đệm an toàn nằm ngay dưới OSM: nếu 1 ô tile OSM tải chậm/lỗi, bản đồ vẫn hiện nền đường thật thay vì ô trắng
+      {
+        id: 'esri-street-base',
+        type: 'raster',
+        source: 'esri-world-street',
+        paint: {
+          'raster-opacity': initialMode === 'street' ? 1 : 0,
+          'raster-opacity-transition': crossfadeTransition,
+          'raster-fade-duration': rasterFade,
+        },
+      },
+      {
+        id: 'osm-standard-base',
+        type: 'raster',
+        source: 'osm-standard',
+        paint: {
+          'raster-opacity': initialMode === 'street' ? 1 : 0,
+          'raster-opacity-transition': crossfadeTransition,
+          'raster-fade-duration': rasterFade,
+        },
+      },
+      {
+        id: 'esri-terrain-base',
+        type: 'raster',
+        source: 'esri-world-topo',
+        paint: {
+          'raster-opacity': initialMode === 'terrain' ? 1 : 0,
+          'raster-opacity-transition': crossfadeTransition,
+          'raster-fade-duration': rasterFade,
         },
       },
       {
@@ -387,26 +339,217 @@ function createSatelliteBaseStyle(
         type: 'raster',
         source: 'esri-world-imagery',
         paint: {
-          'raster-opacity': 1,
-          'raster-fade-duration': 150,
+          'raster-opacity': initialMode === 'satellite' ? 1 : 0,
+          'raster-opacity-transition': crossfadeTransition,
+          'raster-fade-duration': rasterFade,
         },
       },
     ],
   };
 }
 
-function getBasemapStyle(
+/**
+ * Chuyển đổi mượt lớp nền bằng cross-fade opacity — TUYỆT ĐỐI không gọi map.setStyle()
+ */
+function applyBasemapVisibility(
+  map: maplibregl.Map,
   mode: MapStyleMode,
-  streetProvider: StreetBasemapProvider,
-  satelliteMaxZoom: number
-): maplibregl.StyleSpecification {
+  streetProvider: StreetBasemapProvider
+): void {
+  try {
+    if (map.getLayer('basemap-ground-bg')) {
+      map.setPaintProperty(
+        'basemap-ground-bg',
+        'background-color',
+        getGroundColorForMode(mode)
+      );
+    }
+
+    const isStreet = mode === 'street';
+    const showEsriFallback = isStreet;
+    const showOsm = isStreet && streetProvider === 'osm';
+    const showCarto = isStreet && streetProvider === 'carto';
+    const showTerrain = mode === 'terrain';
+    const showSatellite = mode === 'satellite';
+
+    if (map.getLayer('esri-street-base')) {
+      map.setPaintProperty(
+        'esri-street-base',
+        'raster-opacity',
+        showEsriFallback ? 1 : 0
+      );
+    }
+    if (map.getLayer('osm-standard-base')) {
+      map.setPaintProperty(
+        'osm-standard-base',
+        'raster-opacity',
+        showOsm ? 1 : 0
+      );
+    }
+    if (map.getLayer('carto-voyager-base')) {
+      map.setPaintProperty(
+        'carto-voyager-base',
+        'raster-opacity',
+        showCarto ? 1 : 0
+      );
+    }
+    if (map.getLayer('esri-terrain-base')) {
+      map.setPaintProperty(
+        'esri-terrain-base',
+        'raster-opacity',
+        showTerrain ? 1 : 0
+      );
+    }
+    if (map.getLayer('esri-satellite-base')) {
+      map.setPaintProperty(
+        'esri-satellite-base',
+        'raster-opacity',
+        showSatellite ? 1 : 0
+      );
+    }
+  } catch {
+    // ignore
+  }
+}
+
+/**
+ * Gắn động lớp Carto Voyager (khi probe xác nhận không bị watermark API KEY) mà KHÔNG reset style
+ */
+function ensureCartoLayerAttached(map: maplibregl.Map): void {
+  try {
+    if (!map.getSource('carto-voyager')) {
+      map.addSource('carto-voyager', {
+        type: 'raster',
+        tiles: getCartoVoyagerTiles(),
+        tileSize: 256,
+        maxzoom: 19,
+        attribution: '© OpenStreetMap contributors © CARTO',
+      });
+    }
+    if (!map.getLayer('carto-voyager-base')) {
+      const beforeId = map.getLayer('esri-terrain-base')
+        ? 'esri-terrain-base'
+        : undefined;
+      map.addLayer(
+        {
+          id: 'carto-voyager-base',
+          type: 'raster',
+          source: 'carto-voyager',
+          paint: {
+            'raster-opacity': 0,
+            'raster-opacity-transition': {
+              duration: MAP_TILE_PRELOAD_CONFIG.basemapCrossfadeMs,
+              delay: 0,
+            },
+            'raster-fade-duration':
+              MAP_TILE_PRELOAD_CONFIG.rasterFadeDurationMs,
+          },
+        },
+        beforeId
+      );
+    }
+  } catch {
+    // ignore
+  }
+}
+
+/**
+ * Chuyển toạ độ (lng, lat, z) sang chỉ số ô tile Web Mercator để preload nhẹ mức zoom liền kề (z-1, z+1)
+ */
+function lngLatToTileXY(
+  lng: number,
+  lat: number,
+  zoom: number
+): { x: number; y: number } {
+  const n = Math.pow(2, zoom);
+  const x = Math.floor(((lng + 180) / 360) * n);
+  const clampedLat = Math.max(-85.0511, Math.min(85.0511, lat));
+  const latRad = (clampedLat * Math.PI) / 180;
+  const y = Math.floor(
+    ((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2) * n
+  );
+  return {
+    x: ((x % n) + n) % n,
+    y: Math.max(0, Math.min(n - 1, y)),
+  };
+}
+
+function buildPreloadTileUrl(
+  mode: MapStyleMode,
+  provider: StreetBasemapProvider,
+  z: number,
+  x: number,
+  y: number
+): string {
   if (mode === 'satellite') {
-    return createSatelliteBaseStyle(satelliteMaxZoom);
+    return ESRI_SATELLITE_TILES.replace('{z}', String(z))
+      .replace('{y}', String(y))
+      .replace('{x}', String(x));
   }
   if (mode === 'terrain') {
-    return createTerrainBaseStyle();
+    return ESRI_TERRAIN_TOPO_TILES.replace('{z}', String(z))
+      .replace('{y}', String(y))
+      .replace('{x}', String(x));
   }
-  return createStreetBaseStyle(streetProvider);
+  if (provider === 'carto') {
+    const tiles = getCartoVoyagerTiles();
+    const tpl = tiles[(x + y) % tiles.length];
+    return tpl
+      .replace('{z}', String(z))
+      .replace('{x}', String(x))
+      .replace('{y}', String(y));
+  }
+  if (provider === 'esri-street') {
+    return ESRI_STREET_TILES[0]
+      .replace('{z}', String(z))
+      .replace('{y}', String(y))
+      .replace('{x}', String(x));
+  }
+  return OSM_STANDARD_TILES[0]
+    .replace('{z}', String(z))
+    .replace('{x}', String(x))
+    .replace('{y}', String(y));
+}
+
+function preloadAdjacentZoomTiles(
+  map: maplibregl.Map,
+  mode: MapStyleMode,
+  provider: StreetBasemapProvider,
+  cacheSet: Set<string>
+): void {
+  if (typeof window === 'undefined') return;
+  const center = map.getCenter();
+  const curZ = Math.round(map.getZoom());
+  const targetZooms = [curZ - 1, curZ + 1].filter((z) => z >= 3 && z <= 17);
+  let queued = 0;
+  const limit = MAP_TILE_PRELOAD_CONFIG.preloadTileCount;
+
+  for (const z of targetZooms) {
+    const { x, y } = lngLatToTileXY(center.lng, center.lat, z);
+    const n = Math.pow(2, z);
+    const offsets: Array<[number, number]> = [
+      [0, 0],
+      [1, 0],
+      [-1, 0],
+      [0, 1],
+    ];
+    for (const [dx, dy] of offsets) {
+      if (queued >= limit) return;
+      const nx = (((x + dx) % n) + n) % n;
+      const ny = Math.max(0, Math.min(n - 1, y + dy));
+      const url = buildPreloadTileUrl(mode, provider, z, nx, ny);
+      if (cacheSet.has(url)) continue;
+      if (cacheSet.size > 240) {
+        cacheSet.clear();
+      }
+      cacheSet.add(url);
+      const img = new Image();
+      img.decoding = 'async';
+      img.crossOrigin = 'anonymous';
+      img.src = url;
+      queued++;
+    }
+  }
 }
 
 /**
@@ -419,7 +562,7 @@ const SpaceOceanBackdrop: React.FC<{
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   useEffect(() => {
-    if (liteMode) return;
+    if (liteMode || !visible) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
@@ -436,7 +579,13 @@ const SpaceOceanBackdrop: React.FC<{
     };
     window.addEventListener('resize', handleResize);
 
-    const starCount = window.innerWidth < 768 ? 90 : 150;
+    // Giảm số hạt sao trên điện thoại để tiết kiệm pin & giữ 60fps
+    const starCount =
+      window.innerWidth <= RESPONSIVE_BREAKPOINTS.mobileMax
+        ? 55
+        : window.innerWidth <= RESPONSIVE_BREAKPOINTS.tabletMax
+        ? 90
+        : 140;
     const stars = Array.from({ length: starCount }).map(() => ({
       x: Math.random() * width,
       y: Math.random() * height,
@@ -480,7 +629,7 @@ const SpaceOceanBackdrop: React.FC<{
       cancelAnimationFrame(animId);
       window.removeEventListener('resize', handleResize);
     };
-  }, [liteMode]);
+  }, [liteMode, visible]);
 
   return (
     <canvas
@@ -614,7 +763,16 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
     const [streetProvider, setStreetProvider] =
       useState<StreetBasemapProvider>('osm');
 
-    const [currentZoom, setCurrentZoom] = useState(6.2);
+    // Tránh gọi React setState theo từng frame zoom/pan -> giữ trạng thái tương tác bằng ref để chống re-render & chống giật
+    const isMapInteractingRef = useRef<boolean>(false);
+    const interactionResumeTimerRef = useRef<number | null>(null);
+    const preloadedTileUrlsRef = useRef<Set<string>>(new Set());
+    const lastPreloadTsRef = useRef<number>(0);
+
+    const hoveredArcFarmIdRef = useRef<string | null>(null);
+    const arcDirtyRef = useRef<boolean>(true);
+    const lastRenderedArcHighlightRef = useRef<string | null>(null);
+
     const [hoveredId, setHoveredId] = useState<string | null>(null);
     const [hoveredTooltip, setHoveredTooltip] = useState<{
       name: string;
@@ -846,11 +1004,11 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
           pitch: 0,
           bearing: 0,
           padding,
-          duration: 1500,
+          duration: MAP_ZOOM_CONFIG.flyToDurationMs,
           essential: true,
         });
       },
-      flyToOverview: (duration = 1600) => {
+      flyToOverview: (duration = MAP_ZOOM_CONFIG.overviewDurationMs) => {
         const map = mapRef.current;
         if (!map) return;
         const { center, zoom } = getSystemCenterAndZoom(
@@ -886,7 +1044,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
             pitch: 0,
             bearing: 0,
             padding,
-            duration: 1500,
+            duration: MAP_ZOOM_CONFIG.flyToDurationMs,
             essential: true,
           });
         }
@@ -895,7 +1053,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
             {
               lat: Number(centralHub.lat),
               lng: Number(centralHub.lng),
-              altitude: 0.72,
+              altitude: Math.min(1.05, getResponsiveGlobeAltitude() * 0.45),
             },
             1300
           );
@@ -920,7 +1078,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
             {
               lat: center[1],
               lng: center[0],
-              altitude: 0.85,
+              altitude: Math.min(1.25, getResponsiveGlobeAltitude() * 0.52),
             },
             1400
           );
@@ -941,7 +1099,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
             pitch: 0,
             bearing: 0,
             padding,
-            duration: 1500,
+            duration: MAP_ZOOM_CONFIG.flyToDurationMs,
             essential: true,
           });
         }
@@ -952,7 +1110,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
             {
               lat: 14.5,
               lng: 106.8,
-              altitude: 1.75,
+              altitude: getResponsiveGlobeAltitude(),
             },
             1500
           );
@@ -964,7 +1122,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
             {
               lat: 14.5,
               lng: 106.8,
-              altitude: 1.75,
+              altitude: getResponsiveGlobeAltitude(),
             },
             1400
           );
@@ -982,7 +1140,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
             pitch: 0,
             bearing: 0,
             padding: { top: 0, right: 0, bottom: 0, left: 0 },
-            duration: 1600,
+            duration: MAP_ZOOM_CONFIG.overviewDurationMs,
             essential: true,
           });
         }
@@ -1135,15 +1293,25 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         .arcEndLng((d: object) => (d as GlobeArcDatum).endLng)
         .arcColor((d: object) => (d as GlobeArcDatum).color)
         .arcAltitudeAutoScale(0.38)
-        .arcStroke(0.5)
+        .arcStroke(0.26)
         .arcDashLength(0.18)
         .arcDashGap(0.82)
         .arcDashInitialGap(() => Math.random())
         .arcDashAnimateTime(1600);
 
-      // Bật bộ lọc anisotropic cao nhất của WebGL renderer để ghim icon 3D luôn sắc nét ở mọi góc nhìn
+      // Giới hạn pixelRatio hợp lý trên mobile (tối đa 2) & bật anisotropic tối đa cho ghim icon 3D sắc nét
       try {
         const renderer = globe.renderer();
+        if (renderer?.setPixelRatio) {
+          const isSmallMobile =
+            window.innerWidth <= RESPONSIVE_BREAKPOINTS.mobileMax;
+          renderer.setPixelRatio(
+            Math.min(
+              window.devicePixelRatio || 1,
+              isSmallMobile || latestStateRef.current.liteMode ? 1.75 : 2
+            )
+          );
+        }
         if (renderer?.capabilities?.getMaxAnisotropy) {
           const maxAniso = renderer.capabilities.getMaxAnisotropy();
           maxAnisotropyRef.current = maxAniso;
@@ -1156,12 +1324,12 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         // ignore
       }
 
-      // Đặt góc nhìn khởi tạo hướng về Việt Nam / Đông Nam Á
+      // Đặt góc nhìn khởi tạo hướng về Việt Nam / Đông Nam Á (tự cân tỷ lệ để không bị cắt trên điện thoại dọc)
       globe.pointOfView(
         {
           lat: 14.5,
           lng: 106.8,
-          altitude: 1.75,
+          altitude: getResponsiveGlobeAltitude(),
         },
         0
       );
@@ -1174,22 +1342,20 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         controls.enableDamping = true;
         controls.dampingFactor = 0.08;
         controls.minDistance = 118;
-        controls.maxDistance = 460;
+        controls.maxDistance = 480;
       }
 
       globeRef.current = globe;
 
       // Vòng lặp cập nhật kích thước (scale) của các THREE.Sprite theo khoảng cách camera
-      // để từ nhìn xa toàn cầu cho tới phóng sát Việt Nam đều rõ nét, không che khuất nhau và không bao giờ biến mất
+      // (tự tạm nghỉ khi người dùng đang ở chế độ Bản đồ 2D để dành trọn 60fps cho bản đồ)
       let scaleAnimId: number;
       const updateSpriteScales = () => {
         const g = globeRef.current;
-        if (g) {
+        if (g && latestStateRef.current.stage === 'globe') {
           const cam = g.camera();
           const dist = cam ? cam.position.length() : 250;
-          // Khoảng cách tâm Trái đất (bán kính chuẩn R=100): dist ~ 120 (gần) -> 380 (xa)
           const altitudeRatio = Math.max(0.15, (dist - 100) / 100);
-          // Scale tỷ lệ thuận nhẹ với căn bậc hai của độ cao để nhìn xa vẫn to rõ và zoom sát thì tách rời nhau
           const baseScale = Math.max(
             2.6,
             Math.min(11.5, Math.pow(altitudeRatio, 0.72) * 5.8)
@@ -1213,12 +1379,30 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         globeRef.current
           .width(globeContainerRef.current.clientWidth || window.innerWidth)
           .height(globeContainerRef.current.clientHeight || window.innerHeight);
+
+        if (
+          latestStateRef.current.stage === 'globe' &&
+          !latestStateRef.current.selectedFarm &&
+          !latestStateRef.current.isHubSelected
+        ) {
+          const pov = globeRef.current.pointOfView();
+          globeRef.current.pointOfView(
+            {
+              lat: pov?.lat ?? 14.5,
+              lng: pov?.lng ?? 106.8,
+              altitude: getResponsiveGlobeAltitude(),
+            },
+            300
+          );
+        }
       };
 
       window.addEventListener('resize', handleResize);
+      window.addEventListener('orientationchange', handleResize);
       return () => {
         cancelAnimationFrame(scaleAnimId);
         window.removeEventListener('resize', handleResize);
+        window.removeEventListener('orientationchange', handleResize);
         globeRef.current = null;
       };
     }, []);
@@ -1638,9 +1822,9 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
             filter: ['==', ['get', 'ringType'], 'outer'],
             paint: {
               'line-color': '#10b981',
-              'line-width': 4.5,
-              'line-blur': 2.5,
-              'line-opacity': 0.42,
+              'line-width': 3.4,
+              'line-blur': 2.0,
+              'line-opacity': 0.32,
             },
           });
         }
@@ -1653,8 +1837,8 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
             filter: ['==', ['get', 'ringType'], 'outer'],
             paint: {
               'line-color': '#059669',
-              'line-width': 2.4,
-              'line-opacity': 0.95,
+              'line-width': 1.8,
+              'line-opacity': 0.88,
             },
           });
         }
@@ -1683,6 +1867,30 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
           });
         }
 
+        // Độ dày đường cung thanh mảnh hơn 50-60% theo hằng số ARC_LINE_WEIGHT, tự thu phóng theo zoom & thiết bị
+        const arcDeviceScale = getArcDeviceScale();
+        const glowBase5 = Number(
+          (ARC_LINE_WEIGHT * 1.15 * arcDeviceScale).toFixed(2)
+        );
+        const glowBase10 = Number(
+          (ARC_LINE_WEIGHT * 1.65 * arcDeviceScale).toFixed(2)
+        );
+        const glowBase15 = Number(
+          (ARC_LINE_WEIGHT * 2.2 * arcDeviceScale).toFixed(2)
+        );
+        const coreBase5 = Number(
+          (ARC_LINE_WEIGHT * 0.58 * arcDeviceScale).toFixed(2)
+        );
+        const coreBase10 = Number(
+          (ARC_LINE_WEIGHT * 0.82 * arcDeviceScale).toFixed(2)
+        );
+        const coreBase15 = Number(
+          (ARC_LINE_WEIGHT * 1.16 * arcDeviceScale).toFixed(2)
+        );
+        const coreBase18 = Number(
+          (ARC_LINE_WEIGHT * 1.28 * arcDeviceScale).toFixed(2)
+        );
+
         if (!map.getLayer('supply-bezier-glow')) {
           map.addLayer({
             id: 'supply-bezier-glow',
@@ -1699,13 +1907,13 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
                 ['linear'],
                 ['zoom'],
                 5,
-                5.0,
+                ['*', glowBase5, ['coalesce', ['get', 'widthScale'], 1]],
                 10,
-                6.5,
+                ['*', glowBase10, ['coalesce', ['get', 'widthScale'], 1]],
                 15,
-                8.5,
+                ['*', glowBase15, ['coalesce', ['get', 'widthScale'], 1]],
               ],
-              'line-blur': 2.5,
+              'line-blur': 1.6,
               'line-opacity': ['get', 'glowOpacity'],
             },
           });
@@ -1727,13 +1935,33 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
                 ['linear'],
                 ['zoom'],
                 5,
-                2.0,
+                ['*', coreBase5, ['coalesce', ['get', 'widthScale'], 1]],
                 10,
-                2.8,
+                ['*', coreBase10, ['coalesce', ['get', 'widthScale'], 1]],
                 15,
-                3.6,
+                ['*', coreBase15, ['coalesce', ['get', 'widthScale'], 1]],
+                18,
+                ['*', coreBase18, ['coalesce', ['get', 'widthScale'], 1]],
               ],
               'line-opacity': ['get', 'coreOpacity'],
+            },
+          });
+        }
+
+        // Lớp vùng chạm/rê chuột ẩn rộng 14px giúp dễ hover/chạm vào từng đường cung mảnh
+        if (!map.getLayer('supply-bezier-hit')) {
+          map.addLayer({
+            id: 'supply-bezier-hit',
+            type: 'line',
+            source: 'supply-bezier-arcs',
+            layout: {
+              'line-cap': 'round',
+              'line-join': 'round',
+            },
+            paint: {
+              'line-color': '#ffffff',
+              'line-width': 14,
+              'line-opacity': 0,
             },
           });
         }
@@ -1779,7 +2007,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
               'circle-pitch-alignment': 'map',
               'circle-radius': ['get', 'coreRadius'],
               'circle-color': '#fef08a',
-              'circle-stroke-width': 1.2,
+              'circle-stroke-width': 0.9,
               'circle-stroke-color': '#ffffff',
               'circle-opacity': ['get', 'coreOpacity'],
               'circle-stroke-opacity': ['get', 'coreOpacity'],
@@ -2174,13 +2402,12 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
       ]
     );
 
-    // Khởi tạo Bản đồ 2D (MapLibre GL — Raster tile 100% miễn phí, không API Key: Đường | Địa hình | Vệ tinh)
+    // Khởi tạo Bản đồ 2D (MapLibre GL — Style hợp nhất 1 lần duy nhất, giữ cache tile chống chớp trắng/xám)
     useEffect(() => {
       if (!mapContainerRef.current || mapRef.current) return;
 
-      const initialStyle = getBasemapStyle(
+      const initialStyle = createUnifiedBasemapStyle(
         mapStyleMode,
-        streetProviderRef.current,
         esriMaxZoomRef.current
       );
 
@@ -2199,11 +2426,20 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         dragRotate: false,
         touchPitch: false,
         pixelRatio: getOptimalPixelRatio(liteMode),
-        maxTileCacheSize: 512,
-        fadeDuration: 120,
+        maxTileCacheSize: MAP_TILE_PRELOAD_CONFIG.maxTileCacheSize,
+        maxTileCacheZoomLevels: MAP_TILE_PRELOAD_CONFIG.maxTileCacheZoomLevels,
+        fadeDuration: MAP_TILE_PRELOAD_CONFIG.rasterFadeDurationMs,
         refreshExpiredTiles: false,
         attributionControl: false,
       });
+
+      // Tinh chỉnh tốc độ cuộn chuột & pinch zoom mượt, tránh nhảy bậc quá mạnh gây trống tile
+      try {
+        map.scrollZoom.setWheelZoomRate(MAP_ZOOM_CONFIG.wheelZoomRate);
+        map.scrollZoom.setZoomRate(MAP_ZOOM_CONFIG.trackpadZoomRate);
+      } catch {
+        // ignore
+      }
 
       map.on('styleimagemissing', (e) => {
         if (e?.id) {
@@ -2211,26 +2447,16 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         }
       });
 
+      // Chuyển nguồn nền Đường bằng cross-fade opacity — TUYỆT ĐỐI không gọi map.setStyle() để giữ nguyên tile cache
       const switchStreetProvider = (nextProvider: StreetBasemapProvider) => {
         if (streetProviderRef.current === nextProvider) return;
         streetProviderRef.current = nextProvider;
         setStreetProvider(nextProvider);
-        if (currentStyleModeRef.current !== 'street') return;
-
-        const savedCenter = map.getCenter();
-        const savedZoom = map.getZoom();
-        map.setStyle(createStreetBaseStyle(nextProvider));
-        map.once('style.load', () => {
-          isMapLoadedRef.current = true;
-          registerMapLibreFarmIcons(map);
-          map.jumpTo({
-            center: savedCenter,
-            zoom: savedZoom,
-            pitch: 0,
-            bearing: 0,
-          });
-          setupCustomLayers(map);
-        });
+        if (!isMapLoadedRef.current) return;
+        if (nextProvider === 'carto') {
+          ensureCartoLayerAttached(map);
+        }
+        applyBasemapVisibility(map, currentStyleModeRef.current, nextProvider);
       };
 
       // Tự động thăm dò 1 tile Carto Voyager: chỉ kích hoạt Carto nếu ảnh trả về là tile bản đồ thật (> 3500 bytes),
@@ -2248,7 +2474,6 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
           window.clearTimeout(timer);
           if (!res.ok || isProbeCancelled) return;
           const blob = await res.blob();
-          // Ảnh watermark "API KEY REQUIRED" của Carto luôn đúng 2049 bytes (< 3500 bytes)
           if (!isProbeCancelled && blob.size > 3500 && mapRef.current === map) {
             switchStreetProvider('carto');
           }
@@ -2264,7 +2489,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
           const sourceId = errEvent?.sourceId || '';
           const errMsg = String(errEvent?.error?.message || '').toLowerCase();
 
-          // 1. Tự động fallback cho chế độ "Đường": Carto -> OpenStreetMap -> Esri World Street Map
+          // 1. Tự động fallback cho chế độ "Đường": Carto -> OpenStreetMap -> Esri World Street Map (không mất nền)
           if (currentStyleModeRef.current === 'street') {
             if (
               streetProviderRef.current === 'carto' &&
@@ -2293,7 +2518,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
             return;
           }
 
-          // 2. Nếu lớp Địa hình hoặc Vệ tinh Esri tải lỗi -> tự động quay về Bản đồ đường mặc định
+          // 2. Nếu lớp Địa hình hoặc Vệ tinh Esri tải lỗi -> tự động cross-fade về Bản đồ đường
           if (
             currentStyleModeRef.current !== 'satellite' &&
             currentStyleModeRef.current !== 'terrain'
@@ -2347,7 +2572,6 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         if (feats.length === 0) return null;
         if (feats.length === 1) return feats[0];
 
-        // Ưu tiên Nhà Máy Cám nếu nằm trong vùng bấm chính xác
         const hubFeat = feats.find((f) => f.layer?.id === 'hub-icon');
         if (hubFeat) return hubFeat;
 
@@ -2388,16 +2612,43 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         return bestFeat;
       };
 
+      const queryArcAtPoint = (point: maplibregl.Point) => {
+        if (!map.getLayer('supply-bezier-hit')) return null;
+        const arcBox: [maplibregl.PointLike, maplibregl.PointLike] = [
+          [point.x - 8, point.y - 8],
+          [point.x + 8, point.y + 8],
+        ];
+        const feats = map.queryRenderedFeatures(arcBox, {
+          layers: ['supply-bezier-hit'],
+        });
+        return feats.length > 0 ? feats[0] : null;
+      };
+
       map.on('click', (e) => {
         const feat = queryInteractiveFeatureAtPoint(e.point);
         if (!feat) {
+          // Hỗ trợ chạm/click trực tiếp vào đường cung mảnh để nổi bật & xem thông tin trại đích
+          const arcFeat = queryArcAtPoint(e.point);
+          const arcFarmId = String(arcFeat?.properties?.farmId || '');
+          if (arcFarmId) {
+            hoveredArcFarmIdRef.current = arcFarmId;
+            arcDirtyRef.current = true;
+            const matchedArcFarm = latestStateRef.current.farms.find(
+              (f) => f.id === arcFarmId
+            );
+            if (matchedArcFarm) {
+              latestStateRef.current.onSelectFarm(matchedArcFarm);
+              return;
+            }
+          }
+          hoveredArcFarmIdRef.current = null;
+          arcDirtyRef.current = true;
           latestStateRef.current.onClearSelection();
           return;
         }
 
         const props = feat.properties || {};
 
-        // Nếu bấm vào bong bóng cụm (cluster) -> zoom mượt mở rộng tới vùng đó
         if (props.cluster && props.cluster_id !== undefined) {
           const clusterId = Number(props.cluster_id);
           const farmsSource = map.getSource('farms') as
@@ -2410,7 +2661,10 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
               .then((expansionZoom) => {
                 map.easeTo({
                   center: centerCoords,
-                  zoom: Math.min(Math.max(expansionZoom + 0.65, map.getZoom() + 1.5), 15.5),
+                  zoom: Math.min(
+                    Math.max(expansionZoom + 0.65, map.getZoom() + 1.5),
+                    15.5
+                  ),
                   duration: 650,
                   essential: true,
                 });
@@ -2443,8 +2697,38 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
       });
 
       map.on('mousemove', (e) => {
+        if (isMapInteractingRef.current) return;
+
         const feat = queryInteractiveFeatureAtPoint(e.point);
         if (!feat) {
+          const arcFeat = queryArcAtPoint(e.point);
+          const arcFarmId = String(arcFeat?.properties?.farmId || '');
+          if (arcFarmId) {
+            map.getCanvas().style.cursor = 'pointer';
+            if (hoveredArcFarmIdRef.current !== arcFarmId) {
+              hoveredArcFarmIdRef.current = arcFarmId;
+              arcDirtyRef.current = true;
+            }
+            const matchedArcFarm = latestStateRef.current.farms.find(
+              (f) => f.id === arcFarmId
+            );
+            if (matchedArcFarm) {
+              setHoveredTooltip({
+                name: `Tuyến tới ${matchedArcFarm.name}`,
+                badge:
+                  matchedArcFarm.category === 'pig' ? 'Trại heo' : 'Trại gà',
+                x: e.point.x,
+                y: e.point.y,
+              });
+            }
+            setHoveredId((prev) => (prev !== null ? null : prev));
+            return;
+          }
+
+          if (hoveredArcFarmIdRef.current !== null) {
+            hoveredArcFarmIdRef.current = null;
+            arcDirtyRef.current = true;
+          }
           map.getCanvas().style.cursor = '';
           setHoveredId((prev) => (prev !== null ? null : prev));
           setHoveredTooltip((prev) => (prev !== null ? null : prev));
@@ -2455,6 +2739,10 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         const props = feat.properties || {};
 
         if (props.cluster) {
+          if (hoveredArcFarmIdRef.current !== null) {
+            hoveredArcFarmIdRef.current = null;
+            arcDirtyRef.current = true;
+          }
           setHoveredId((prev) => (prev !== null ? null : prev));
           if (feat.geometry?.type === 'Point') {
             const c = feat.geometry.coordinates as [number, number];
@@ -2472,6 +2760,10 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
 
         const farmId = String(props.id || props.farmId || '');
         if (props.isHub) {
+          if (hoveredArcFarmIdRef.current !== null) {
+            hoveredArcFarmIdRef.current = null;
+            arcDirtyRef.current = true;
+          }
           setHoveredId(farmId);
           setHoveredTooltip(null);
           return;
@@ -2481,6 +2773,10 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
           (f) => f.id === farmId
         );
         if (matched) {
+          if (hoveredArcFarmIdRef.current !== matched.id) {
+            hoveredArcFarmIdRef.current = matched.id;
+            arcDirtyRef.current = true;
+          }
           setHoveredId(matched.id);
           if (map.getZoom() < 11) {
             const projected = map.project([matched.lng, matched.lat]);
@@ -2500,24 +2796,91 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         }
       });
 
-      map.on('zoom', () => {
-        setCurrentZoom(map.getZoom());
-      });
+      // Tạm dừng các vòng lặp hiệu ứng nặng khi đang kéo/zoom để giữ mượt 60fps & preload tile mức zoom liền kề khi dừng
+      const markInteractionStart = () => {
+        if (interactionResumeTimerRef.current !== null) {
+          window.clearTimeout(interactionResumeTimerRef.current);
+          interactionResumeTimerRef.current = null;
+        }
+        isMapInteractingRef.current = true;
+        setHoveredTooltip((prev) => (prev !== null ? null : prev));
+      };
+
+      const markInteractionEnd = () => {
+        if (interactionResumeTimerRef.current !== null) {
+          window.clearTimeout(interactionResumeTimerRef.current);
+        }
+        interactionResumeTimerRef.current = window.setTimeout(() => {
+          isMapInteractingRef.current = false;
+          arcDirtyRef.current = true;
+
+          // Preload nhẹ các tile mức zoom lân cận (z-1, z+1) theo throttle để zoom ra/vào không bị trống
+          const now = Date.now();
+          if (
+            now - lastPreloadTsRef.current >=
+            MAP_TILE_PRELOAD_CONFIG.moveThrottleMs
+          ) {
+            lastPreloadTsRef.current = now;
+            preloadAdjacentZoomTiles(
+              map,
+              currentStyleModeRef.current,
+              streetProviderRef.current,
+              preloadedTileUrlsRef.current
+            );
+          }
+        }, 80);
+      };
+
+      map.on('movestart', markInteractionStart);
+      map.on('zoomstart', markInteractionStart);
+      map.on('moveend', markInteractionEnd);
+      map.on('zoomend', markInteractionEnd);
 
       map.on('load', () => {
         isMapLoadedRef.current = true;
+        if (streetProviderRef.current === 'carto') {
+          ensureCartoLayerAttached(map);
+        }
+        applyBasemapVisibility(
+          map,
+          currentStyleModeRef.current,
+          streetProviderRef.current
+        );
         setupCustomLayers(map);
+        // Preload trước một số tile mức zoom lân cận quanh vùng trung tâm
+        preloadAdjacentZoomTiles(
+          map,
+          currentStyleModeRef.current,
+          streetProviderRef.current,
+          preloadedTileUrlsRef.current
+        );
       });
 
       mapRef.current = map;
 
+      // Khi đổi kích thước cửa sổ hoặc xoay màn hình -> giữ nguyên tâm & mức zoom hiện tại
+      let resizeRafId: number | null = null;
       const handleViewportResize = () => {
         if (!mapRef.current) return;
-        try {
-          mapRef.current.resize();
-        } catch {
-          // ignore
-        }
+        if (resizeRafId !== null) cancelAnimationFrame(resizeRafId);
+        resizeRafId = requestAnimationFrame(() => {
+          const m = mapRef.current;
+          if (!m) return;
+          try {
+            const preservedCenter = m.getCenter();
+            const preservedZoom = m.getZoom();
+            m.resize();
+            m.jumpTo({
+              center: preservedCenter,
+              zoom: preservedZoom,
+              pitch: 0,
+              bearing: 0,
+            });
+            arcDirtyRef.current = true;
+          } catch {
+            // ignore
+          }
+        });
       };
 
       const resizeObserver = new ResizeObserver(() => {
@@ -2530,6 +2893,10 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
 
       return () => {
         isProbeCancelled = true;
+        if (resizeRafId !== null) cancelAnimationFrame(resizeRafId);
+        if (interactionResumeTimerRef.current !== null) {
+          window.clearTimeout(interactionResumeTimerRef.current);
+        }
         resizeObserver.disconnect();
         window.removeEventListener('resize', handleViewportResize);
         window.removeEventListener('orientationchange', handleViewportResize);
@@ -2539,11 +2906,12 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    // Khi chuyển từ Quả địa cầu 3D sang Bản đồ 2D, gọi map.resize() + triggerRepaint() để khung vẽ và tile khớp 100%
+    // Khi chuyển từ Quả địa cầu 3D sang Bản đồ 2D, gọi map.resize() + triggerRepaint() (giữ nguyên 1 instance duy nhất)
     useEffect(() => {
       if (stage === 'map' && mapRef.current) {
         mapRef.current.resize();
         mapRef.current.triggerRepaint();
+        arcDirtyRef.current = true;
         const t = window.setTimeout(() => {
           mapRef.current?.resize();
           mapRef.current?.triggerRepaint();
@@ -2552,7 +2920,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
       }
     }, [stage]);
 
-    // Chuyển đổi 3 lớp nền Đường | Địa hình | Vệ tinh
+    // Chuyển đổi 3 lớp nền Đường | Địa hình | Vệ tinh bằng cross-fade opacity (KHÔNG gọi map.setStyle() -> ZERO chớp trắng/xám!)
     const currentStyleModeRef = useRef<MapStyleMode>(mapStyleMode);
     useEffect(() => {
       const map = mapRef.current;
@@ -2562,29 +2930,16 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
       currentStyleModeRef.current = mapStyleMode;
       tileErrorTimestampsRef.current = [];
 
-      const savedCenter = map.getCenter();
-      const savedZoom = map.getZoom();
-
-      const nextStyle = getBasemapStyle(
-        mapStyleMode,
-        streetProviderRef.current,
-        esriMaxZoomRef.current
-      );
-
-      map.setStyle(nextStyle);
-
-      map.once('style.load', () => {
-        isMapLoadedRef.current = true;
-        registerMapLibreFarmIcons(map);
-        map.jumpTo({
-          center: savedCenter,
-          zoom: savedZoom,
-          pitch: 0,
-          bearing: 0,
-        });
-        setupCustomLayers(map);
-      });
-    }, [mapStyleMode, setupCustomLayers]);
+      if (isMapLoadedRef.current) {
+        applyBasemapVisibility(map, mapStyleMode, streetProviderRef.current);
+        preloadAdjacentZoomTiles(
+          map,
+          mapStyleMode,
+          streetProviderRef.current,
+          preloadedTileUrlsRef.current
+        );
+      }
+    }, [mapStyleMode]);
 
     // Cập nhật dữ liệu source "farms" (có gom cụm) & "hub-source" (không gom cụm) trên Bản đồ 2D
     useEffect(() => {
@@ -2640,7 +2995,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
       buildSelectedPinGeoJSON,
     ]);
 
-    // Hiệu ứng vòng sáng pulse nhịp nhàng quanh chân ghim đang chọn trên Bản đồ 2D
+    // Hiệu ứng vòng sáng pulse nhịp nhàng quanh chân ghim đang chọn trên Bản đồ 2D (tự tạm dừng khi đang kéo/zoom)
     useEffect(() => {
       const map = mapRef.current;
       if (stage !== 'map' || (!selectedFarm && !isHubSelected) || !map) return;
@@ -2650,40 +3005,43 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
 
       const animateSelectedPulse = (now: number) => {
         if (!mapRef.current || !isMapLoadedRef.current) return;
-        const cycle = ((now - startTime) % 1500) / 1500;
-        const eased = 1 - Math.pow(1 - cycle, 2);
-        const outerRadius = 11 + eased * 22;
-        const outerStrokeOpacity = Math.max(0, (1 - cycle) * 0.92);
-        const outerFillOpacity = Math.max(0, (1 - cycle) * 0.34);
-        const innerRadius = 8 + Math.sin(cycle * Math.PI) * 3.5;
 
-        try {
-          if (map.getLayer('farm-selected-pulse-outer')) {
-            map.setPaintProperty(
-              'farm-selected-pulse-outer',
-              'circle-radius',
-              outerRadius
-            );
-            map.setPaintProperty(
-              'farm-selected-pulse-outer',
-              'circle-opacity',
-              outerFillOpacity
-            );
-            map.setPaintProperty(
-              'farm-selected-pulse-outer',
-              'circle-stroke-opacity',
-              outerStrokeOpacity
-            );
+        if (!isMapInteractingRef.current) {
+          const cycle = ((now - startTime) % 1500) / 1500;
+          const eased = 1 - Math.pow(1 - cycle, 2);
+          const outerRadius = 11 + eased * 20;
+          const outerStrokeOpacity = Math.max(0, (1 - cycle) * 0.88);
+          const outerFillOpacity = Math.max(0, (1 - cycle) * 0.3);
+          const innerRadius = 8 + Math.sin(cycle * Math.PI) * 3.2;
+
+          try {
+            if (map.getLayer('farm-selected-pulse-outer')) {
+              map.setPaintProperty(
+                'farm-selected-pulse-outer',
+                'circle-radius',
+                outerRadius
+              );
+              map.setPaintProperty(
+                'farm-selected-pulse-outer',
+                'circle-opacity',
+                outerFillOpacity
+              );
+              map.setPaintProperty(
+                'farm-selected-pulse-outer',
+                'circle-stroke-opacity',
+                outerStrokeOpacity
+              );
+            }
+            if (map.getLayer('farm-selected-pulse-inner')) {
+              map.setPaintProperty(
+                'farm-selected-pulse-inner',
+                'circle-radius',
+                innerRadius
+              );
+            }
+          } catch {
+            // ignore
           }
-          if (map.getLayer('farm-selected-pulse-inner')) {
-            map.setPaintProperty(
-              'farm-selected-pulse-inner',
-              'circle-radius',
-              innerRadius
-            );
-          }
-        } catch {
-          // ignore
         }
 
         rafId = requestAnimationFrame(animateSelectedPulse);
@@ -2733,7 +3091,10 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
     ]);
 
     // =========================================================================
-    // 3. LUỒNG ĐỐM SÁNG CHẠY MỘT CHIỀU TỪ NHÀ MÁY ➔ TRẠI GÀ & TRẠI HEO TRÊN BẢN ĐỒ 2D (60FPS)
+    // 3. LUỒNG ĐỐM SÁNG CHẠY MỘT CHIỀU TỪ NHÀ MÁY ➔ TRẠI GÀ & TRẠI HEO TRÊN BẢN ĐỒ 2D
+    //    - Cache tọa độ Bezier 1 lần, không tính lại mỗi frame zoom/pan
+    //    - Đường cung mảnh thanh thoát hơn 50-60%, nổi bật khi rê chuột/chạm
+    //    - Tự tạm dừng khi đang kéo/zoom và lọc bỏ cung ngoài viewport để đạt 60fps
     // =========================================================================
     const prevActiveTargetsRef = useRef<Farm[]>([]);
     const arcModeRef = useRef<'idle' | 'growing' | 'active' | 'shrinking'>(
@@ -2741,8 +3102,24 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
     );
     const arcTransitionStartRef = useRef<number>(0);
 
+    const evaluateQuadraticBezier = useCallback(
+      (
+        p0: [number, number],
+        p1: [number, number],
+        p2: [number, number],
+        t: number
+      ): [number, number] => {
+        const inv = 1 - t;
+        const lng = inv * inv * p0[0] + 2 * inv * t * p1[0] + t * t * p2[0];
+        const lat = inv * inv * p0[1] + 2 * inv * t * p1[1] + t * t * p2[1];
+        return [lng, lat];
+      },
+      []
+    );
+
     useEffect(() => {
       const now = performance.now();
+      arcDirtyRef.current = true;
       if (activeTargetFarms.length > 0) {
         prevActiveTargetsRef.current = activeTargetFarms;
         if (
@@ -2762,6 +3139,90 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         }
       }
     }, [activeTargetFarms]);
+
+    // Đánh dấu cập nhật highlight đường cung khi điểm đang chọn thay đổi
+    useEffect(() => {
+      arcDirtyRef.current = true;
+    }, [selectedFarm, singleArcFarmId]);
+
+    // Cache hình học đường cung Bezier tĩnh một lần cho từng tập mục tiêu (tránh tính lại 18 điểm mỗi frame)
+    const cachedArcGeometries = useMemo(() => {
+      const targets =
+        activeTargetFarms.length > 0
+          ? activeTargetFarms
+          : prevActiveTargetsRef.current;
+      if (!centralHub || targets.length === 0) return [];
+
+      let hubCoords: [number, number] = [
+        Number(centralHub.lng),
+        Number(centralHub.lat),
+      ];
+      if (Math.abs(hubCoords[0]) < 30 && Math.abs(hubCoords[1]) >= 30) {
+        hubCoords = [hubCoords[1], hubCoords[0]];
+      }
+      const [hubLng, hubLat] = hubCoords;
+
+      return targets.map((farm, idx) => {
+        let farmCoords: [number, number] = [
+          Number(farm.lng),
+          Number(farm.lat),
+        ];
+        if (Math.abs(farmCoords[0]) < 30 && Math.abs(farmCoords[1]) >= 30) {
+          farmCoords = [farmCoords[1], farmCoords[0]];
+        }
+        const [farmLng, farmLat] = farmCoords;
+
+        const dx = farmLng - hubLng;
+        const dy = farmLat - hubLat;
+        const bendSign = idx % 2 === 0 ? 1 : -1;
+        const bendFactor = 0.16 * bendSign;
+        const ctrlPt: [number, number] = [
+          hubLng + dx * 0.5 - dy * bendFactor,
+          hubLat + dy * 0.5 + dx * bendFactor,
+        ];
+
+        const steps = 18;
+        const fullCoords: Array<[number, number]> = [];
+        let minLng = Math.min(hubLng, farmLng);
+        let maxLng = Math.max(hubLng, farmLng);
+        let minLat = Math.min(hubLat, farmLat);
+        let maxLat = Math.max(hubLat, farmLat);
+
+        for (let s = 0; s <= steps; s++) {
+          const pt = evaluateQuadraticBezier(
+            [hubLng, hubLat],
+            ctrlPt,
+            [farmLng, farmLat],
+            s / steps
+          );
+          fullCoords.push(pt);
+          if (pt[0] < minLng) minLng = pt[0];
+          if (pt[0] > maxLng) maxLng = pt[0];
+          if (pt[1] < minLat) minLat = pt[1];
+          if (pt[1] > maxLat) maxLat = pt[1];
+        }
+
+        const isPig = farm.category === 'pig';
+        return {
+          farm,
+          idx,
+          hubLng,
+          hubLat,
+          farmLng,
+          farmLat,
+          ctrlPt,
+          fullCoords,
+          bbox: [minLng, minLat, maxLng, maxLat] as [
+            number,
+            number,
+            number,
+            number,
+          ],
+          lineColor: isPig ? '#e11d48' : '#ea580c',
+          coreColor: isPig ? '#f43f5e' : '#f97316',
+        };
+      });
+    }, [activeTargetFarms, centralHub, evaluateQuadraticBezier]);
 
     useEffect(() => {
       let animId: number;
@@ -2795,18 +3256,6 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         }
       };
 
-      const evaluateQuadraticBezier = (
-        p0: [number, number],
-        p1: [number, number],
-        p2: [number, number],
-        t: number
-      ): [number, number] => {
-        const inv = 1 - t;
-        const lng = inv * inv * p0[0] + 2 * inv * t * p1[0] + t * t * p2[0];
-        const lat = inv * inv * p0[1] + 2 * inv * t * p1[1] + t * t * p2[1];
-        return [lng, lat];
-      };
-
       const animateArcs = (now: number) => {
         const map = mapRef.current;
         const mode = arcModeRef.current;
@@ -2821,14 +3270,18 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
           return;
         }
 
-        const farmsForArcs =
-          activeTargetFarms.length > 0
-            ? activeTargetFarms
-            : prevActiveTargetsRef.current;
-
-        if (!centralHub || farmsForArcs.length === 0) {
+        if (!centralHub || cachedArcGeometries.length === 0) {
           arcModeRef.current = 'idle';
           clearSupplyGeoJSONSources();
+          return;
+        }
+
+        // Tạm dừng cập nhật nặng khi người dùng đang zoom/kéo hoặc đang ở màn hình Quả địa cầu 3D
+        if (
+          isMapInteractingRef.current ||
+          latestStateRef.current.stage !== 'map'
+        ) {
+          animId = requestAnimationFrame(animateArcs);
           return;
         }
 
@@ -2837,6 +3290,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
 
         if (mode === 'growing' && elapsedMs >= 1100) {
           arcModeRef.current = 'active';
+          arcDirtyRef.current = true;
         } else if (mode === 'shrinking') {
           if (elapsedMs >= 500) {
             arcModeRef.current = 'idle';
@@ -2848,15 +3302,39 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         }
 
         phase += liteMode ? 0.015 : 0.02;
-        const total = Math.max(1, farmsForArcs.length);
-        let hubCoords: [number, number] = [
-          Number(centralHub.lng),
-          Number(centralHub.lat),
-        ];
-        if (Math.abs(hubCoords[0]) < 30 && Math.abs(hubCoords[1]) >= 30) {
-          hubCoords = [hubCoords[1], hubCoords[0]];
-        }
-        const [hubLng, hubLat] = hubCoords;
+        const total = Math.max(1, cachedArcGeometries.length);
+        const hubLng = cachedArcGeometries[0].hubLng;
+        const hubLat = cachedArcGeometries[0].hubLat;
+
+        const activeHighlightId =
+          hoveredArcFarmIdRef.current ||
+          latestStateRef.current.selectedFarm?.id ||
+          null;
+        const hasMultiHighlight =
+          total > 1 &&
+          activeHighlightId !== null &&
+          cachedArcGeometries.some((g) => g.farm.id === activeHighlightId);
+
+        const highlightKey = hasMultiHighlight ? activeHighlightId : null;
+        const shouldUploadArcLines =
+          arcModeRef.current !== 'active' ||
+          arcDirtyRef.current ||
+          lastRenderedArcHighlightRef.current !== highlightKey;
+
+        // Lọc viewport có đệm để chỉ vẽ các đường cung nằm trong vùng nhìn thấy
+        const bounds = map.getBounds();
+        const padLng = Math.max(
+          0.15,
+          (bounds.getEast() - bounds.getWest()) * 0.2
+        );
+        const padLat = Math.max(
+          0.15,
+          (bounds.getNorth() - bounds.getSouth()) * 0.2
+        );
+        const viewWest = bounds.getWest() - padLng;
+        const viewEast = bounds.getEast() + padLng;
+        const viewSouth = bounds.getSouth() - padLat;
+        const viewNorth = bounds.getNorth() + padLat;
 
         const bezierLineFeatures: Array<{
           type: 'Feature';
@@ -2877,18 +3355,18 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
           geometry: { type: 'Point'; coordinates: [number, number] };
         }> = [];
 
-        // Vòng sóng nhẹ lan tỏa liên tục quanh Nhà máy Trung tâm
+        // Vòng sóng nhẹ lan tỏa liên tục quanh Nhà Máy Cám (tỷ lệ thanh mảnh cân đối)
         for (let rIdx = 0; rIdx < 2; rIdx++) {
           const hubWave = (phase * 0.85 + rIdx * 0.5) % 1;
           impactRingFeatures.push({
             type: 'Feature',
             properties: {
-              radius: 10 + hubWave * 26,
+              radius: 8 + hubWave * 20,
               color: '#38bdf8',
-              fillOpacity: Math.max(0, (1 - hubWave) * 0.24 * globalFade),
-              strokeWidth: 2.2,
+              fillOpacity: Math.max(0, (1 - hubWave) * 0.18 * globalFade),
+              strokeWidth: 1.5,
               strokeColor: '#facc15',
-              strokeOpacity: Math.max(0, (1 - hubWave) * 0.9 * globalFade),
+              strokeOpacity: Math.max(0, (1 - hubWave) * 0.8 * globalFade),
             },
             geometry: {
               type: 'Point',
@@ -2897,10 +3375,23 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
           });
         }
 
-        farmsForArcs.forEach((farm, idx) => {
+        const streamCount = liteMode ? 1 : 2;
+        const trailSteps = liteMode ? 2 : 3;
+
+        for (const arc of cachedArcGeometries) {
+          const [minLng, minLat, maxLng, maxLat] = arc.bbox;
+          if (
+            maxLng < viewWest ||
+            minLng > viewEast ||
+            maxLat < viewSouth ||
+            minLat > viewNorth
+          ) {
+            continue;
+          }
+
           let reachProgress = 1;
           if (arcModeRef.current === 'growing') {
-            const staggerDelay = total > 1 ? (idx / (total - 1)) * 380 : 0;
+            const staggerDelay = total > 1 ? (arc.idx / (total - 1)) * 380 : 0;
             const localElapsed = Math.max(0, elapsedMs - staggerDelay);
             const rawT = Math.min(1, localElapsed / 620);
             reachProgress = 1 - Math.pow(1 - rawT, 3);
@@ -2909,51 +3400,41 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
             reachProgress = Math.max(0, 1 - shrinkT);
           }
 
-          let farmCoords: [number, number] = [
-            Number(farm.lng),
-            Number(farm.lat),
-          ];
-          if (Math.abs(farmCoords[0]) < 30 && Math.abs(farmCoords[1]) >= 30) {
-            farmCoords = [farmCoords[1], farmCoords[0]];
-          }
-          const [farmLng, farmLat] = farmCoords;
+          const isHighlighted = hasMultiHighlight && arc.farm.id === highlightKey;
+          const isDimmed = hasMultiHighlight && !isHighlighted;
 
-          const dx = farmLng - hubLng;
-          const dy = farmLat - hubLat;
-          const bendSign = idx % 2 === 0 ? 1 : -1;
-          const bendFactor = 0.16 * bendSign;
-          const ctrlPt: [number, number] = [
-            hubLng + dx * 0.5 - dy * bendFactor,
-            hubLat + dy * 0.5 + dx * bendFactor,
-          ];
-
-          const isPig = farm.category === 'pig';
-          const lineColor = isPig ? '#e11d48' : '#ea580c';
-          const coreColor = isPig ? '#f43f5e' : '#f97316';
-
-          if (reachProgress > 0.03) {
-            const steps = 18;
-            const coords: Array<[number, number]> = [];
-            for (let s = 0; s <= steps; s++) {
-              const t = (s / steps) * reachProgress;
-              coords.push(
-                evaluateQuadraticBezier(
-                  [hubLng, hubLat],
-                  ctrlPt,
-                  [farmLng, farmLat],
-                  t
-                )
-              );
+          if (shouldUploadArcLines && reachProgress > 0.03) {
+            let coords: Array<[number, number]>;
+            if (reachProgress >= 0.995) {
+              coords = arc.fullCoords;
+            } else {
+              const steps = 18;
+              coords = [];
+              for (let s = 0; s <= steps; s++) {
+                const t = (s / steps) * reachProgress;
+                coords.push(
+                  evaluateQuadraticBezier(
+                    [arc.hubLng, arc.hubLat],
+                    arc.ctrlPt,
+                    [arc.farmLng, arc.farmLat],
+                    t
+                  )
+                );
+              }
             }
 
             bezierLineFeatures.push({
               type: 'Feature',
               properties: {
-                id: `bezier-${farm.id}`,
-                color: lineColor,
-                coreColor,
-                glowOpacity: 0.42 * globalFade,
-                coreOpacity: 0.92 * globalFade,
+                id: `bezier-${arc.farm.id}`,
+                farmId: arc.farm.id,
+                color: arc.lineColor,
+                coreColor: arc.coreColor,
+                widthScale: isHighlighted ? 1.48 : isDimmed ? 0.85 : 1.0,
+                glowOpacity:
+                  (isHighlighted ? 0.42 : isDimmed ? 0.08 : 0.22) * globalFade,
+                coreOpacity:
+                  (isHighlighted ? 0.98 : isDimmed ? 0.28 : 0.84) * globalFade,
               },
               geometry: {
                 type: 'LineString',
@@ -2962,13 +3443,12 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
             });
           }
 
-          // Nhiều đốm sáng phát quang chạy nối đuôi nhau một chiều từ Nhà máy (t = 0) ➔ Trại (t = 1)
-          const streamCount = liteMode ? 1 : 2;
-          const trailSteps = liteMode ? 2 : 4;
+          const particleOpacityMult = isDimmed ? 0.3 : 1;
 
+          // Hạt đốm sáng vàng thu nhỏ tỷ lệ đồng bộ với đường cung mảnh
           for (let sIdx = 0; sIdx < streamCount; sIdx++) {
             const headT =
-              ((phase * 0.54 + idx * 0.17 + sIdx * (1 / streamCount)) % 1) *
+              ((phase * 0.54 + arc.idx * 0.17 + sIdx * (1 / streamCount)) % 1) *
               reachProgress;
 
             for (let tr = 0; tr < trailSteps; tr++) {
@@ -2976,23 +3456,28 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
               if (trailT <= 0.01 || trailT > reachProgress) continue;
 
               const pt = evaluateQuadraticBezier(
-                [hubLng, hubLat],
-                ctrlPt,
-                [farmLng, farmLat],
+                [arc.hubLng, arc.hubLat],
+                arc.ctrlPt,
+                [arc.farmLng, arc.farmLat],
                 trailT
               );
               const tailFactor = 1 - tr / trailSteps;
+              const boost = isHighlighted ? 1.18 : 1;
 
               particleFeatures.push({
                 type: 'Feature',
                 properties: {
-                  color: tr === 0 ? '#facc15' : lineColor,
-                  coreRadius: tr === 0 ? 4.0 : 2.6 * tailFactor,
-                  glowRadius: tr === 0 ? 8.8 : 5.8 * tailFactor,
+                  color: tr === 0 ? '#facc15' : arc.lineColor,
+                  coreRadius: (tr === 0 ? 2.7 : 1.7 * tailFactor) * boost,
+                  glowRadius: (tr === 0 ? 5.6 : 3.5 * tailFactor) * boost,
                   coreOpacity:
-                    (tr === 0 ? 0.98 : 0.78 * tailFactor) * globalFade,
+                    (tr === 0 ? 0.96 : 0.72 * tailFactor) *
+                    globalFade *
+                    particleOpacityMult,
                   glowOpacity:
-                    (tr === 0 ? 0.8 : 0.5 * tailFactor) * globalFade,
+                    (tr === 0 ? 0.7 : 0.4 * tailFactor) *
+                    globalFade *
+                    particleOpacityMult,
                 },
                 geometry: {
                   type: 'Point',
@@ -3001,42 +3486,46 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
               });
             }
 
-            if (reachProgress > 0.92 && headT >= 0.82) {
+            if (reachProgress > 0.92 && headT >= 0.82 && !isDimmed) {
               const impactWave = (headT - 0.82) / 0.18;
               impactRingFeatures.push({
                 type: 'Feature',
                 properties: {
-                  radius: 6 + impactWave * 18,
-                  color: lineColor,
+                  radius: 5 + impactWave * 13,
+                  color: arc.lineColor,
                   fillOpacity: Math.max(
                     0,
-                    (1 - impactWave) * 0.32 * globalFade
+                    (1 - impactWave) * 0.24 * globalFade
                   ),
-                  strokeWidth: 2,
+                  strokeWidth: 1.5,
                   strokeColor: '#fef08a',
                   strokeOpacity: Math.max(
                     0,
-                    (1 - impactWave) * 0.92 * globalFade
+                    (1 - impactWave) * 0.85 * globalFade
                   ),
                 },
                 geometry: {
                   type: 'Point',
-                  coordinates: [farmLng, farmLat],
+                  coordinates: [arc.farmLng, arc.farmLat],
                 },
               });
             }
           }
-        });
+        }
 
         try {
-          (
-            map.getSource('supply-bezier-arcs') as
-              | maplibregl.GeoJSONSource
-              | undefined
-          )?.setData({
-            type: 'FeatureCollection',
-            features: bezierLineFeatures,
-          });
+          if (shouldUploadArcLines) {
+            (
+              map.getSource('supply-bezier-arcs') as
+                | maplibregl.GeoJSONSource
+                | undefined
+            )?.setData({
+              type: 'FeatureCollection',
+              features: bezierLineFeatures,
+            });
+            arcDirtyRef.current = false;
+            lastRenderedArcHighlightRef.current = highlightKey;
+          }
           (
             map.getSource('supply-particles') as
               | maplibregl.GeoJSONSource
@@ -3062,47 +3551,67 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
 
       animId = requestAnimationFrame(animateArcs);
       return () => cancelAnimationFrame(animId);
-    }, [activeTargetFarms, centralHub, liteMode]);
+    }, [cachedArcGeometries, centralHub, evaluateQuadraticBezier, liteMode]);
+
+    const handleZoomIn = useCallback(() => {
+      const map = mapRef.current;
+      if (!map) return;
+      map.zoomTo(Math.min(19, map.getZoom() + MAP_ZOOM_CONFIG.zoomButtonStep), {
+        duration: MAP_ZOOM_CONFIG.zoomButtonDurationMs,
+      });
+    }, []);
+
+    const handleZoomOut = useCallback(() => {
+      const map = mapRef.current;
+      if (!map) return;
+      map.zoomTo(Math.max(2, map.getZoom() - MAP_ZOOM_CONFIG.zoomButtonStep), {
+        duration: MAP_ZOOM_CONFIG.zoomButtonDurationMs,
+      });
+    }, []);
 
     const currentPreset = APP_CONFIG.timePresets[timeOfDay];
 
     return (
-      <div className="app-viewport relative bg-[#041829]">
+      <div
+        className={`app-viewport relative transition-colors duration-500 ${
+          stage === 'map' ? 'bg-[#f2efe9]' : 'bg-[#041829]'
+        }`}
+      >
         {/* Nền vũ trụ xanh đậm có sao mờ và quầng khí quyển cho Quả địa cầu 3D */}
         <SpaceOceanBackdrop visible={stage === 'globe'} liteMode={liteMode} />
 
         {/* 1. QUẢ ĐỊA CẦU 3D MẶC ĐỊNH (`globe.gl` + `THREE.Sprite` ghim icon rõ nét ở mọi mức zoom) */}
         <div
           ref={globeContainerRef}
-          className={`fixed inset-0 z-10 transition-opacity duration-500 ${
+          className={`map-gesture-surface fixed inset-0 z-10 transition-opacity duration-500 ${
             stage === 'globe'
               ? 'pointer-events-auto opacity-100'
               : 'pointer-events-none opacity-0'
           }`}
         />
 
-        {/* 2. BẢN ĐỒ 2D PHẲNG NHẸ (MapLibre GL — Mặc định nền OpenStreetMap gốc, pitch: 0) */}
+        {/* 2. BẢN ĐỒ 2D PHẲNG NHẸ (MapLibre GL — Style hợp nhất chống chớp nền, pitch: 0) */}
         <div
           ref={mapContainerRef}
-          className={`fixed inset-0 z-10 transition-opacity duration-500 ${
+          className={`map-gesture-surface fixed inset-0 z-10 transition-opacity duration-500 ${
             stage === 'map'
               ? 'pointer-events-auto opacity-100'
               : 'pointer-events-none opacity-0'
           }`}
         />
 
-        {/* Tooltip tên trang trại + nhãn mô tả khi rê chuột vào icon ở mức zoom xa trên Bản đồ 2D */}
+        {/* Tooltip tên trang trại + nhãn mô tả khi rê chuột vào icon hoặc tuyến đường cung ở Bản đồ 2D */}
         {stage === 'map' && hoveredTooltip && (
           <div
-            className="pointer-events-none fixed z-20 flex -translate-x-1/2 items-center gap-1.5 whitespace-nowrap rounded-full border border-white/95 bg-white/95 px-3 py-1 text-[11px] font-extrabold text-[#0f2a24] shadow-md backdrop-blur-md"
+            className="pointer-events-none fixed z-20 flex max-w-[80vw] -translate-x-1/2 items-center gap-1.5 whitespace-nowrap rounded-full border border-white/95 bg-white/95 px-3 py-1 text-[11px] font-extrabold text-[#0f2a24] shadow-md backdrop-blur-md"
             style={{
               left: `${hoveredTooltip.x}px`,
               top: `${Math.max(hoveredTooltip.y - 50, 12)}px`,
             }}
           >
-            <span>{hoveredTooltip.name}</span>
+            <span className="truncate">{hoveredTooltip.name}</span>
             {hoveredTooltip.badge && (
-              <span className="rounded-full bg-[#e6f4f1] px-2 py-0.5 text-[9.5px] font-bold text-[#145349]">
+              <span className="shrink-0 rounded-full bg-[#e6f4f1] px-2 py-0.5 text-[9.5px] font-bold text-[#145349]">
                 {hoveredTooltip.badge}
               </span>
             )}
@@ -3117,14 +3626,47 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
               style={{ backgroundColor: currentPreset.ambientTint }}
               aria-hidden="true"
             />
-            <AtmosphericCloudsOverlay zoom={currentZoom} liteMode={liteMode} />
+            <AtmosphericCloudsOverlay zoom={6.2} liteMode={liteMode} />
           </>
+        )}
+
+        {/* Cụm nút phóng to / thu nhỏ (+/-) tối thiểu 44x44px chuẩn chạm trên Bản đồ 2D */}
+        {stage === 'map' && (
+          <div
+            className={`pointer-events-auto fixed right-2.5 z-20 flex-col gap-1.5 sm:right-4 ${
+              selectedFarm || isHubSelected ? 'hidden sm:flex' : 'flex'
+            }`}
+            style={{
+              bottom: 'calc(var(--safe-bottom) + 124px)',
+            }}
+            role="group"
+            aria-label="Điều khiển phóng to thu nhỏ bản đồ"
+          >
+            <button
+              type="button"
+              onClick={handleZoomIn}
+              title="Phóng to bản đồ"
+              aria-label="Phóng to bản đồ"
+              className="glass-panel flex h-11 w-11 items-center justify-center rounded-full border border-white/95 bg-white/92 text-[#0f2a24] shadow-[0_8px_20px_rgba(15,42,36,0.16)] transition-colors hover:border-[#2b8fd0] hover:text-[#2b8fd0] active:scale-95 cursor-pointer"
+            >
+              <Plus className="h-5 w-5" />
+            </button>
+            <button
+              type="button"
+              onClick={handleZoomOut}
+              title="Thu nhỏ bản đồ"
+              aria-label="Thu nhỏ bản đồ"
+              className="glass-panel flex h-11 w-11 items-center justify-center rounded-full border border-white/95 bg-white/92 text-[#0f2a24] shadow-[0_8px_20px_rgba(15,42,36,0.16)] transition-colors hover:border-[#2b8fd0] hover:text-[#2b8fd0] active:scale-95 cursor-pointer"
+            >
+              <Minus className="h-5 w-5" />
+            </button>
+          </div>
         )}
 
         {/* Thanh chuyển nhanh 3 lớp nền trực tiếp ở góc Bản đồ 2D: Đường | Địa hình | Vệ tinh */}
         {stage === 'map' && onSelectMapStyle && (
           <div
-            className={`pointer-events-auto fixed left-2.5 bottom-[118px] z-20 items-center gap-0.5 rounded-full border border-white/95 bg-white/94 p-1 shadow-[0_8px_24px_rgba(15,42,36,0.18)] backdrop-blur-xl sm:bottom-[36px] ${
+            className={`pointer-events-auto fixed left-2.5 bottom-[122px] z-20 max-w-[calc(100vw-72px)] items-center gap-0.5 rounded-full border border-white/95 bg-white/94 p-1 shadow-[0_8px_24px_rgba(15,42,36,0.18)] backdrop-blur-xl sm:bottom-[36px] sm:left-4 sm:max-w-none ${
               selectedFarm || isHubSelected ? 'hidden sm:flex' : 'flex'
             }`}
             role="group"
@@ -3135,17 +3677,17 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
                 {
                   key: 'street' as MapStyleMode,
                   label: 'Đường',
-                  icon: <MapIcon className="h-3.5 w-3.5" />,
+                  icon: <MapIcon className="h-3.5 w-3.5 shrink-0" />,
                 },
                 {
                   key: 'terrain' as MapStyleMode,
                   label: 'Địa hình',
-                  icon: <Mountain className="h-3.5 w-3.5" />,
+                  icon: <Mountain className="h-3.5 w-3.5 shrink-0" />,
                 },
                 {
                   key: 'satellite' as MapStyleMode,
                   label: 'Vệ tinh',
-                  icon: <Satellite className="h-3.5 w-3.5" />,
+                  icon: <Satellite className="h-3.5 w-3.5 shrink-0" />,
                 },
               ] as const
             ).map((opt) => {
@@ -3155,7 +3697,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
                   key={opt.key}
                   type="button"
                   onClick={() => onSelectMapStyle(opt.key)}
-                  className={`flex min-h-[32px] items-center gap-1.5 rounded-full px-3 py-1 text-[11px] font-extrabold transition-all cursor-pointer ${
+                  className={`flex min-h-[36px] items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-extrabold whitespace-nowrap transition-all cursor-pointer sm:px-3 ${
                     active
                       ? 'bg-[#2b8fd0] text-white shadow-xs'
                       : 'text-[#0f2a24]/75 hover:bg-emerald-950/5 hover:text-[#0f2a24]'
@@ -3174,7 +3716,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
           <div
             className="pointer-events-auto fixed left-1/2 z-20 -translate-x-1/2"
             style={{
-              bottom: 'calc(var(--safe-bottom) + 74px)',
+              bottom: 'calc(var(--safe-bottom) + 114px)',
             }}
           >
             <motion.button
@@ -3183,9 +3725,9 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
               whileTap={{ scale: 0.96 }}
               onClick={onEnterMapOverview}
               title="Chuyển sang Bản đồ 2D chi tiết"
-              className="glass-panel group flex min-h-[44px] items-center gap-2.5 rounded-full border-white/95 px-5 py-2 text-xs font-extrabold text-[#0f2a24] shadow-[0_14px_32px_rgba(15,42,36,0.22)] transition-colors hover:border-[#2b8fd0] hover:bg-white cursor-pointer"
+              className="glass-panel group flex min-h-[44px] items-center gap-2.5 rounded-full border-white/95 px-5 py-2 text-xs font-extrabold whitespace-nowrap text-[#0f2a24] shadow-[0_14px_32px_rgba(15,42,36,0.22)] transition-colors hover:border-[#2b8fd0] hover:bg-white cursor-pointer sm:text-sm"
             >
-              <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[#2b8fd0] text-white shadow-xs transition-transform group-hover:scale-110">
+              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#2b8fd0] text-white shadow-xs transition-transform group-hover:scale-110">
                 <MapIcon className="h-3.5 w-3.5" />
               </span>
               <span>Xem bản đồ chi tiết</span>
@@ -3196,7 +3738,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         {/* Ghi nguồn (attribution) tự động cập nhật theo lớp nền đang bật ở góc trái dưới */}
         {stage === 'map' && (
           <div
-            className="pointer-events-none fixed left-2.5 z-20 max-w-[75vw] truncate rounded-full border border-white/85 bg-white/88 px-2.5 py-0.5 text-[9.5px] font-semibold text-[#0f2a24] shadow-xs backdrop-blur-md sm:max-w-lg sm:px-3 sm:py-1 sm:text-[10px]"
+            className="pointer-events-none fixed left-2.5 z-20 max-w-[75vw] truncate rounded-full border border-white/85 bg-white/88 px-2.5 py-0.5 text-[9.5px] font-semibold text-[#0f2a24] shadow-xs backdrop-blur-md sm:left-4 sm:max-w-lg sm:px-3 sm:py-1 sm:text-[10px]"
             style={{
               bottom: 'calc(var(--safe-bottom) + 6px)',
             }}

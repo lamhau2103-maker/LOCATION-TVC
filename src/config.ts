@@ -1,6 +1,46 @@
 import { FarmCategory, FarmStatus, TimeOfDay } from './types';
 
 /**
+ * ============================================================================
+ * CÁC HẰNG SỐ CẤU HÌNH DỄ TINH CHỈNH (BẢN ĐỒ, ĐƯỜNG CUNG & RESPONSIVE)
+ * ============================================================================
+ */
+// Độ dày cơ bản (px) của đường cung kết nối Nhà Máy Cám -> Trại Gà / Trại Heo (mảnh hơn 50-60% so với bản cũ)
+export const ARC_LINE_WEIGHT = 2;
+
+// Cấu hình tốc độ & độ mượt zoom trên Bản đồ 2D (tương đương zoomSnap / wheelPxPerZoomLevel trên MapLibre GL)
+export const MAP_ZOOM_CONFIG = {
+  wheelZoomRate: 1 / 650, // Giảm tốc độ cuộn chuột (mặc định MapLibre 1/450 -> mượt & ít giật hơn)
+  trackpadZoomRate: 1 / 140, // Mượt khi pinch trackpad / touch
+  flyToDurationMs: 1550, // Thời lượng bay mượt tới trại
+  overviewDurationMs: 1650, // Thời lượng bay về toàn cảnh
+  zoomButtonStep: 1.0, // Bước zoom cho nút +/-
+  zoomButtonDurationMs: 320,
+} as const;
+
+// Cấu hình cache & preload tile nền chống chớp trắng / xám khi zoom nhỏ
+export const MAP_TILE_PRELOAD_CONFIG = {
+  maxTileCacheSize: 1024, // Giữ tối đa 1024 tile trong bộ nhớ đệm GPU/RAM
+  maxTileCacheZoomLevels: 12, // Giữ tile ở nhiều mức zoom cha/con để không bị trống khi zoom nhanh
+  preloadTileCount: 8, // Số lượng tile mức zoom lân cận (z-1, z+1) preload nhẹ trong nền
+  rasterFadeDurationMs: 220, // Thời gian cross-fade khi tile mới xuất hiện (ms)
+  basemapCrossfadeMs: 320, // Thời gian chuyển mượt giữa 3 nền Đường / Địa hình / Vệ tinh (ms)
+  moveThrottleMs: 120, // Chu kỳ throttle khi pan/zoom để giảm tải CPU
+  groundColorStreet: '#f2efe9', // Nền đất trung tính đồng màu bản đồ đường (không trắng gắt / không xám đen)
+  groundColorTerrain: '#e8efe2', // Nền xanh lá nhạt đồng màu bản đồ địa hình
+  groundColorSatellite: '#1e293b', // Nền trầm đồng màu ảnh vệ tinh
+} as const;
+
+// Breakpoint responsive chuẩn cho mọi thiết bị (320px -> 4K)
+export const RESPONSIVE_BREAKPOINTS = {
+  mobileMax: 639, // < 640px: Điện thoại dọc
+  tabletMax: 1023, // 640px – 1023px: Tablet & điện thoại ngang rộng
+  desktopLargeMin: 1536, // >= 1536px: Màn hình lớn / 2K / 4K
+  landscapeShortMaxHeight: 500, // Điện thoại xoay ngang (chiều cao thấp)
+  hudMaxWidthPx: 1680, // Chiều rộng tối đa khung HUD trên màn hình siêu rộng 2K/4K
+} as const;
+
+/**
  * FILE CẤU HÌNH HỆ THỐNG TRANG TRẠI (src/config.ts)
  * Thương hiệu: Công Ty Cổ Phần Thái Việt Corporation
  * Màu nhấn thương hiệu: Xanh dương hoa sen #2b8fd0, Đỏ #d9261c

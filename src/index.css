@@ -39,19 +39,48 @@ body,
   margin: 0;
   padding: 0;
   overflow: hidden;
-  background-color: #e6f4f1;
+  overflow-x: clip;
+  background-color: #f2efe9;
   color: #0f2a24;
   font-family: var(--font-sans);
   user-select: none;
   -webkit-tap-highlight-color: transparent;
+  -webkit-text-size-adjust: 100%;
 }
 
 .app-viewport {
   width: 100%;
   max-width: 100vw;
   height: 100vh;
+  height: 100svh;
   height: 100dvh;
   overflow: hidden;
+  overflow-x: clip;
+}
+
+/* Đảm bảo cử chỉ vuốt/pinch chỉ điều khiển bản đồ/địa cầu, không kéo cả trang */
+.map-gesture-surface,
+.maplibregl-canvas-container,
+.maplibregl-canvas {
+  touch-action: none !important;
+}
+
+/* Tránh zoom nhầm khi chạm đúp vào nút/link trên điện thoại & tablet */
+button,
+a,
+[role="button"] {
+  touch-action: manipulation;
+}
+
+/* Chống tự động zoom trang trên iOS Safari khi bấm vào ô input trên màn hình chạm / điện thoại */
+@media (max-width: 639px), (pointer: coarse) {
+  input[type="text"],
+  input[type="search"],
+  input[type="password"],
+  input[type="url"],
+  textarea {
+    font-size: 16px !important;
+  }
 }
 
 .font-display {
@@ -126,7 +155,7 @@ body,
     transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-@media (hover: hover) {
+@media (hover: hover) and (pointer: fine) {
   .farm-pin-marker:hover .farm-pin-body,
   .hub-pin-marker:hover .farm-pin-body {
     transform: scale(1.16);

@@ -839,8 +839,8 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
             paddingRight: 'max(12px, var(--safe-right))',
           }}
         >
-          {/* Cụm Trái: Logo + Chip thống kê 1 dòng + Chip lọc */}
-          <div className="glass-panel pointer-events-auto flex items-center gap-2 rounded-full px-2.5 py-1">
+          {/* Cụm Trái: Logo + Chip thống kê 1 dòng + Chip lọc (cuộn ngang mượt, không tràn màn hình nhỏ) */}
+          <div className="glass-panel pointer-events-auto flex min-w-0 max-w-[54vw] items-center gap-1.5 overflow-x-auto rounded-full px-2 py-1 no-scrollbar">
             <button
               type="button"
               onClick={stage === 'map' ? onBackToGlobe : onFlyOverview}
@@ -858,9 +858,9 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
               )}
             </button>
 
-            <div className="h-4 w-px bg-emerald-950/15" />
+            <div className="h-4 w-px shrink-0 bg-emerald-950/15" />
 
-            <span className="text-[11px] font-extrabold text-[#0f2a24]">
+            <span className="shrink-0 text-[11px] font-extrabold whitespace-nowrap text-[#0f2a24]">
               {farms.length} trại
             </span>
 
@@ -871,7 +871,7 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
                   key={btn.key}
                   type="button"
                   onClick={() => onToggleCategory(btn.key)}
-                  className={`flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-extrabold transition-all cursor-pointer ${
+                  className={`flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-extrabold transition-all cursor-pointer ${
                     isActive
                       ? 'bg-white text-[#0f2a24] shadow-2xs ring-1 ring-[#2b8fd0]/20'
                       : 'opacity-45'
@@ -884,8 +884,8 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
             })}
           </div>
 
-          {/* Cụm Phải: Tìm kiếm nhỏ + Nút icon Tour + La bàn + Tùy chỉnh */}
-          <div className="pointer-events-auto flex items-center gap-1.5">
+          {/* Cụm Phải: Tìm kiếm nhỏ + Nút Trở về + La bàn + Tùy chỉnh */}
+          <div className="pointer-events-auto flex shrink-0 items-center gap-1.5">
             <div
               ref={landscapeDropdownWrapperRef}
               className="relative flex items-center"
@@ -901,7 +901,7 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
                 }}
                 onKeyDown={handleSearchKeyDown}
                 placeholder="Tất cả địa điểm..."
-                className="glass-panel h-9 w-36 rounded-full pr-11 pl-7 text-xs font-medium text-[#0f2a24] transition-all focus:w-48 focus:outline-none"
+                className="glass-panel h-9 w-32 rounded-full pr-11 pl-7 text-[16px] font-medium text-[#0f2a24] transition-all focus:w-44 focus:outline-none md:w-36 md:text-xs md:focus:w-48"
               />
               {searchQuery && (
                 <button
@@ -1164,8 +1164,8 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
             paddingBottom: 'calc(var(--safe-bottom) + 10px)',
           }}
         >
-          {/* Hàng chip lọc cuộn ngang ngay phía trên Bottom Dock */}
-          <div className="pointer-events-auto flex items-center justify-center gap-1.5 overflow-x-auto py-0.5 no-scrollbar">
+          {/* Hàng chip lọc cuộn ngang ngay phía trên Bottom Dock (không cắt chữ trên màn hình 320px/360px) */}
+          <div className="pointer-events-auto flex w-full items-center justify-start gap-1.5 overflow-x-auto px-0.5 py-0.5 no-scrollbar min-[390px]:justify-center">
             {categoryButtons.map((btn) => {
               const isActive = activeCategories[btn.key];
               return (
@@ -1173,13 +1173,13 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
                   key={btn.key}
                   type="button"
                   onClick={() => onToggleCategory(btn.key)}
-                  className={`flex min-h-[38px] shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-bold transition-all ${
+                  className={`flex min-h-[40px] shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-bold whitespace-nowrap transition-all ${
                     isActive
                       ? 'glass-panel bg-white/95 text-[#0f2a24] shadow-xs ring-1 ring-[#2b8fd0]/25'
                       : 'glass-panel bg-white/60 text-emerald-950/45 opacity-65'
                   }`}
                 >
-                  <CuteCategoryIcon category={btn.key} className="h-4 w-4" />
+                  <CuteCategoryIcon category={btn.key} className="h-4 w-4 shrink-0" />
                   <span>{btn.label}</span>
                   <span className="font-mono-tabular text-[11px] opacity-70">
                     ({btn.count})
@@ -1189,13 +1189,13 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
             })}
           </div>
 
-          {/* Thanh Dock chính: Nút Tìm kiếm / Danh sách điểm (bung rộng khi bấm) + Nút TOUR TỰ ĐỘNG */}
+          {/* Thanh Dock chính: Nút Tìm kiếm / Danh sách điểm (bung rộng khi bấm) + Nút Trở về ban đầu */}
           <div
             ref={mobileDropdownWrapperRef}
             className="pointer-events-auto relative flex items-center gap-2"
           >
             {isMobileSearchExpanded || searchQuery ? (
-              <div className="glass-panel relative flex h-11 flex-1 items-center rounded-full bg-white/95 px-3.5 shadow-md">
+              <div className="glass-panel relative flex h-11 min-w-0 flex-1 items-center rounded-full bg-white/95 px-3.5 shadow-md">
                 <Search className="h-4 w-4 shrink-0 text-[#2b8fd0]" />
                 <input
                   ref={mobileSearchInputRef}
@@ -1209,7 +1209,7 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
                   onKeyDown={handleSearchKeyDown}
                   placeholder="Chọn hoặc tìm địa điểm..."
                   autoFocus
-                  className="h-full w-full bg-transparent px-2 text-xs font-semibold text-[#0f2a24] placeholder-emerald-950/45 focus:outline-none"
+                  className="h-full min-w-0 flex-1 bg-transparent px-2 text-[16px] font-semibold text-[#0f2a24] placeholder-emerald-950/45 focus:outline-none sm:text-xs"
                 />
                 <button
                   type="button"
@@ -1270,16 +1270,18 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
       )}
 
       {/* =====================================================================
-          GIAO DIỆN IPAD / TABLET & LAPTOP (>= 640px)
+          GIAO DIỆN IPAD / TABLET & LAPTOP / 2K-4K (>= 640px)
+          Giới hạn max-w-[1680px] để trên màn hình siêu rộng (2560px/4K) thanh HUD cân đối, không dạt quá xa mép
          ===================================================================== */}
       <div
-        className="pointer-events-none fixed inset-x-0 top-0 z-20 hidden flex-col gap-2.5 p-3 sm:flex sm:p-4"
+        className="pointer-events-none fixed inset-x-0 top-0 z-20 hidden flex-col sm:flex"
         style={{
-          paddingTop: 'max(14px, var(--safe-top))',
-          paddingLeft: 'max(16px, var(--safe-left))',
-          paddingRight: 'max(16px, var(--safe-right))',
+          paddingTop: 'max(12px, var(--safe-top))',
+          paddingLeft: 'max(14px, var(--safe-left))',
+          paddingRight: 'max(14px, var(--safe-right))',
         }}
       >
+        <div className="mx-auto flex w-full max-w-[1680px] flex-col gap-2.5">
         {/* HÀNG 1: Bảng Logo + Thống kê bên trái | 3 Nút gọn gàng bên phải */}
         <div className="flex flex-wrap items-start justify-between gap-2.5">
           {/* Khối Trái: Logo Hoa Sen Thái Việt + Tên công ty + Bảng thống kê */}
@@ -1287,13 +1289,13 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
             initial={{ opacity: 0, y: -16 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ type: 'spring', stiffness: 240, damping: 24 }}
-            className="glass-panel pointer-events-auto relative overflow-hidden rounded-[22px] px-3.5 py-2.5 sm:px-4"
+            className="glass-panel pointer-events-auto relative max-w-full overflow-hidden rounded-[22px] px-3.5 py-2.5 sm:px-4"
           >
             <PanelParticles count={6} color="#facc15" disabled={liteMode} />
 
-            <div className="relative z-10 flex flex-wrap items-center gap-3.5 sm:gap-5">
+            <div className="relative z-10 flex flex-wrap items-center gap-3 sm:gap-4 lg:gap-5">
               {/* Thương hiệu: Khung kính trắng chứa phần Hoa sen + Tên công ty */}
-              <div className="flex items-center gap-3 border-r border-emerald-950/10 pr-3.5">
+              <div className="flex min-w-0 items-center gap-3 border-r border-emerald-950/10 pr-3.5">
                 <motion.button
                   type="button"
                   whileHover={{ y: -1, scale: 1.04 }}
@@ -1304,7 +1306,7 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
                       ? 'Về địa cầu 3D tự xoay'
                       : 'Xem bản đồ chi tiết'
                   }
-                  className="flex h-[46px] w-[46px] shrink-0 items-center justify-center rounded-[14px] border border-white/95 bg-white/90 p-1.5 shadow-[0_6px_16px_rgba(43,143,208,0.18)] ring-1 ring-[#2b8fd0]/20 cursor-pointer"
+                  className="flex h-[44px] w-[44px] shrink-0 items-center justify-center rounded-[14px] border border-white/95 bg-white/90 p-1.5 shadow-[0_6px_16px_rgba(43,143,208,0.18)] ring-1 ring-[#2b8fd0]/20 cursor-pointer lg:h-[46px] lg:w-[46px]"
                 >
                   {!logoError ? (
                     <div className="h-full w-full overflow-hidden">
@@ -1320,8 +1322,8 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
                   )}
                 </motion.button>
 
-                <div className="flex items-center">
-                  <div className="font-display text-xs font-extrabold tracking-tight text-[#0f2a24] sm:text-sm">
+                <div className="flex min-w-0 items-center">
+                  <div className="font-display truncate text-[clamp(0.78rem,1.05vw,0.95rem)] font-extrabold tracking-tight text-[#0f2a24]">
                     {companyName}
                   </div>
                 </div>
@@ -1555,7 +1557,7 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
               }}
               onKeyDown={handleSearchKeyDown}
               placeholder="Tìm tên trại / Chọn địa điểm..."
-              className="glass-panel h-10 w-60 rounded-full pr-14 pl-9 text-xs font-semibold text-[#0f2a24] placeholder-emerald-950/50 transition-all focus:w-72 focus:border-[#2b8fd0] focus:bg-white/95 focus:outline-none lg:w-68 lg:focus:w-80"
+              className="glass-panel h-10 w-56 rounded-full pr-14 pl-9 text-[16px] font-semibold text-[#0f2a24] placeholder-emerald-950/50 transition-all focus:w-68 focus:border-[#2b8fd0] focus:bg-white/95 focus:outline-none md:text-xs lg:w-68 lg:focus:w-80"
             />
             {searchQuery && (
               <button
@@ -1583,7 +1585,7 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
           </div>
 
           {/* Chip lọc theo loại trang trại */}
-          <div className="glass-panel flex shrink-0 items-center gap-1 rounded-full p-1">
+          <div className="glass-panel flex max-w-full shrink-0 items-center gap-1 overflow-x-auto rounded-full p-1 no-scrollbar">
             {categoryButtons.map((btn) => {
               const isActive = activeCategories[btn.key];
               return (
@@ -1593,7 +1595,7 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
                   whileHover={{ y: -1 }}
                   whileTap={{ scale: 0.96 }}
                   onClick={() => onToggleCategory(btn.key)}
-                  className={`flex min-h-[34px] shrink-0 items-center gap-1.5 rounded-full px-3.5 py-1 text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
+                  className={`flex min-h-[34px] shrink-0 items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold whitespace-nowrap transition-all cursor-pointer lg:px-3.5 ${
                     isActive
                       ? 'bg-white text-[#0f2a24] shadow-xs ring-1 ring-[#2b8fd0]/20'
                       : 'text-emerald-950/45 opacity-60 hover:opacity-90'
@@ -1611,6 +1613,7 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
             })}
           </div>
         </motion.div>
+        </div>
       </div>
 
       {/* PANEL "TÙY CHỈNH" DẠNG BOTTOM-SHEET VUỐT XUỐNG ĐỂ ĐÓNG TRÊN ĐIỆN THOẠI DỌC (< 640px) */}
