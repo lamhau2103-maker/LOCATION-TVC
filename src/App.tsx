@@ -16,6 +16,7 @@ import { APP_CONFIG, getAutoTimeOfDay } from './config';
 import defaultFarmsData from './data/farms.json';
 import {
   AppStage,
+  ArcColorConfig,
   CentralHub,
   Farm,
   FarmCategory,
@@ -423,6 +424,23 @@ export default function App() {
     return {};
   });
 
+  // 4b-3. Bảng màu tia cung ứng tùy chỉnh (Admin chỉnh sửa, đồng bộ từ Upstash Redis + cache localStorage)
+  const [arcColors, setArcColors] = useState<ArcColorConfig>(() => {
+    try {
+      const saved = localStorage.getItem('thaiviet_corp_arc_colors_v1');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === 'object') return parsed;
+      }
+    } catch {
+      // ignore
+    }
+    return {
+      chicken: { from: '#FACC15', to: '#F97316' },
+      pig: { from: '#FACC15', to: '#FB7185' },
+    };
+  });
+
   const [isServerIconConnected, setIsServerIconConnected] =
     useState<boolean>(true);
   const [bouncingFarmId, setBouncingFarmId] = useState<string | null>(null);
@@ -439,6 +457,34 @@ export default function App() {
   const [isAdminLoginOpen, setIsAdminLoginOpen] = useState(false);
   const [isBulkIconModalOpen, setIsBulkIconModalOpen] = useState(false);
   const [isPositionDiagOpen, setIsPositionDiagOpen] = useState(false);
+
+  const handleSaveArcColors = useCallback(
+    async (nextColors: ArcColorConfig) => {
+      const res = await fetch('/api/icons', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-admin-password': adminPassword,
+        },
+        body: JSON.stringify({ arcColors: nextColors }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Không thể lưu bảng màu tia lên Upstash.');
+      }
+      setArcColors(nextColors);
+      try {
+        localStorage.setItem(
+          'thaiviet_corp_arc_colors_v1',
+          JSON.stringify(nextColors)
+        );
+      } catch {
+        // ignore
+      }
+      setToastMessage('Đã lưu bảng màu tia lên Upstash thành công!');
+    },
+    [adminPassword]
+  );
 
   // Áp dụng quy tắc kiểm tra toạ độ chính xác 100% + nhận diện tự động "Nhà Máy Cám" từ dữ liệu My Maps + phân loại Icon 3 tầng
   const farms = useMemo<Farm[]>(() => {
@@ -705,6 +751,7 @@ export default function App() {
             ok?: boolean;
             icons?: Record<string, string>;
             customLabels?: Record<string, string>;
+            arcColors?: ArcColorConfig;
             items?: Array<{ farm_key?: string; icon?: string }>;
           }
         | Array<{ farm_key?: string; icon?: string }>;
@@ -763,6 +810,24 @@ export default function App() {
             );
           } catch {
             // ignore
+          }
+        }
+
+        if (data.arcColors && typeof data.arcColors === 'object') {
+          const fetchedArcs = data.arcColors as ArcColorConfig;
+          if (
+            fetchedArcs.chicken?.from &&
+            fetchedArcs.chicken?.to &&
+            fetchedArcs.pig?.from &&
+            fetchedArcs.pig?.to
+          ) {
+            setArcColors(fetchedArcs);
+            try {
+              localStorage.setItem(
+                'thaiviet_corp_arc_colors_v1',
+                JSON.stringify(fetchedArcs)
+              );
+            } catch {}
           }
         }
         return true;
@@ -1572,6 +1637,7 @@ export default function App() {
         stage={stage}
         logoUrl={logoUrl}
         farms={farms}
+        arcColors={arcColors}
         newlyAddedIds={newlyAddedIds}
         removingFarms={removingFarms}
         bouncingFarmId={bouncingFarmId}
@@ -1709,6 +1775,8 @@ export default function App() {
             liteMode={liteMode}
             isAdmin={isAdmin}
             onSaveCustomLabel={handleSaveCustomLabel}
+            arcColors={arcColors}
+            onSaveArcColors={handleSaveArcColors}
             mobileSheetSnap={mobileSheetSnap}
             onChangeMobileSheetSnap={setMobileSheetSnap}
           />

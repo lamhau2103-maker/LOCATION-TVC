@@ -45,7 +45,7 @@ export default async function handler(req: any, res: any) {
     }
 
     try {
-      const [iconsRes, labelsRes] = await Promise.all([
+      const [iconsRes, labelsRes, arcColorsRes] = await Promise.all([
         fetch(`${redisUrl}/hgetall/${encodeURIComponent(REDIS_HASH_KEY)}`, {
           method: 'GET',
           headers: {
@@ -63,6 +63,13 @@ export default async function handler(req: any, res: any) {
             },
           }
         ),
+        fetch(`${redisUrl}/get/arc_colors`, {
+          method: 'GET',
+          headers: {
+            Authorization: `Bearer ${redisToken}`,
+            Accept: 'application/json',
+          },
+        }),
       ]);
 
       if (!iconsRes.ok) {
@@ -104,11 +111,22 @@ export default async function handler(req: any, res: any) {
         }
       }
 
+      let arcColors = null;
+      if (arcColorsRes.ok) {
+        const arcData = await arcColorsRes.json();
+        const rawArc = arcData?.result;
+        if (typeof rawArc === 'string' && rawArc.trim()) {
+          try {
+            arcColors = JSON.parse(rawArc);
+          } catch {}
+        }
+      }
+
       res.setHeader(
         'Cache-Control',
         'no-store, no-cache, must-revalidate, proxy-revalidate'
       );
-      res.status(200).json({ ok: true, icons: iconsMap, items, customLabels });
+      res.status(200).json({ ok: true, icons: iconsMap, items, customLabels, arcColors });
       return;
     } catch (err) {
       res.status(500).json({
@@ -189,10 +207,11 @@ export default async function handler(req: any, res: any) {
       ? [body]
       : [];
 
-    if (rawIconItems.length === 0 && rawLabelItems.length === 0) {
+    const hasArcColors = body?.arcColors && typeof body.arcColors === 'object';
+    if (rawIconItems.length === 0 && rawLabelItems.length === 0 && !hasArcColors) {
       res.status(400).json({
         error:
-          'Thiếu dữ liệu { farm_key, icon }, { farm_key, label }, { items: [...] } hoặc { labelItems: [...] }.',
+          'Thiếu dữ liệu { farm_key, icon }, { farm_key, label }, { arcColors: {...} } hoặc các mục cập nhật.',
       });
       return;
     }
@@ -282,6 +301,9 @@ export default async function handler(req: any, res: any) {
       }
       if (labelHdelArgs.length > 0) {
         await execRedisCmd(['HDEL', REDIS_LABELS_HASH_KEY, ...labelHdelArgs]);
+      }
+      if (body?.arcColors && typeof body.arcColors === 'object') {
+        await execRedisCmd(['SET', 'arc_colors', JSON.stringify(body.arcColors)]);
       }
 
       res.status(200).json({

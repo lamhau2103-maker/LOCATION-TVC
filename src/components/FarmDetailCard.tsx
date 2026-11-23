@@ -26,6 +26,7 @@ import {
   RESPONSIVE_BREAKPOINTS,
 } from '../config';
 import {
+  ArcColorConfig,
   CentralHub,
   Farm,
   FarmCategory,
@@ -797,6 +798,8 @@ interface HubDetailCardProps {
   liteMode?: boolean;
   isAdmin?: boolean;
   onSaveCustomLabel?: (farm: Farm, label: string) => Promise<void>;
+  arcColors?: ArcColorConfig;
+  onSaveArcColors?: (colors: ArcColorConfig) => Promise<void>;
   mobileSheetSnap?: MobileSheetSnap;
   onChangeMobileSheetSnap?: (snap: MobileSheetSnap) => void;
 }
@@ -819,6 +822,8 @@ export const HubDetailCard: React.FC<HubDetailCardProps> = ({
   liteMode = false,
   isAdmin = false,
   onSaveCustomLabel,
+  arcColors,
+  onSaveArcColors,
   mobileSheetSnap = 'half',
   onChangeMobileSheetSnap,
 }) => {
@@ -828,6 +833,29 @@ export const HubDetailCard: React.FC<HubDetailCardProps> = ({
   const [labelInput, setLabelInput] = useState('');
   const [isSavingLabel, setIsSavingLabel] = useState(false);
   const deviceMode = useDeviceCardMode();
+
+  const currentArcColors = arcColors || {
+    chicken: { from: '#FACC15', to: '#F97316' },
+    pig: { from: '#FACC15', to: '#FB7185' },
+  };
+
+  const [draftArcColors, setDraftArcColors] = useState<ArcColorConfig>(currentArcColors);
+  const [isEditingArcs, setIsEditingArcs] = useState(false);
+  const [isSavingArcs, setIsSavingArcs] = useState(false);
+  const [arcSaveError, setArcSaveError] = useState('');
+
+  useEffect(() => {
+    setDraftArcColors(currentArcColors);
+  }, [arcColors]);
+
+  const hasUnsavedArcs = JSON.stringify(draftArcColors) !== JSON.stringify(currentArcColors);
+
+  const PRESET_PALETTES = [
+    { name: 'Mặc định', chicken: { from: '#FACC15', to: '#F97316' }, pig: { from: '#FACC15', to: '#FB7185' } },
+    { name: 'Hoàng hôn', chicken: { from: '#EF4444', to: '#F97316' }, pig: { from: '#8B5CF6', to: '#EC4899' } },
+    { name: 'Đại dương', chicken: { from: '#3B82F6', to: '#14B8A6' }, pig: { from: '#14B8A6', to: '#10B981' } },
+    { name: 'Rừng xanh', chicken: { from: '#10B981', to: '#FACC15' }, pig: { from: '#14B8A6', to: '#3B82F6' } },
+  ];
 
   const hubDisplayLabel = feedMillFarm
     ? getLocationDisplayLabel(feedMillFarm, customLabels)
@@ -1118,25 +1146,191 @@ export const HubDetailCard: React.FC<HubDetailCardProps> = ({
           <div className="mt-2.5 rounded-2xl border border-[#facc15]/60 bg-gradient-to-r from-amber-50/95 via-sky-50/90 to-rose-50/90 px-3.5 py-2.5 shadow-2xs">
             <div className="text-xs font-extrabold text-[#0f2a24] sm:text-sm">
               Độ phủ cung ứng:{' '}
-              <span className="text-[#ea580c]">
+              <span style={{ color: currentArcColors.chicken.to }}>
                 {connectedChickenCount} trại gà
               </span>
               ,{' '}
-              <span className="text-[#e11d48]">
+              <span style={{ color: currentArcColors.pig.to }}>
                 {connectedPigCount} trại heo
               </span>
             </div>
-            <div className="mt-1 flex flex-wrap items-center gap-3 text-[11px] font-bold text-emerald-950/70">
-              <span className="inline-flex items-center gap-1 text-[#ea580c]">
-                <span className="h-2 w-2 rounded-full bg-[#fb923c]" />
-                Tia vàng → cam: Trại gà
+            <div className="mt-1.5 flex flex-wrap items-center gap-3 text-[11px] font-bold text-emerald-950/70">
+              <span className="inline-flex items-center gap-1.5" style={{ color: currentArcColors.chicken.to }}>
+                <span
+                  className="h-2.5 w-4 rounded-full shadow-xs shrink-0"
+                  style={{
+                    background: `linear-gradient(90deg, ${currentArcColors.chicken.from}, ${currentArcColors.chicken.to})`,
+                  }}
+                />
+                <span>Trại gà ({currentArcColors.chicken.from} → {currentArcColors.chicken.to})</span>
               </span>
-              <span className="inline-flex items-center gap-1 text-[#e11d48]">
-                <span className="h-2 w-2 rounded-full bg-[#fb7185]" />
-                Tia vàng → hồng: Trại heo
+              <span className="inline-flex items-center gap-1.5" style={{ color: currentArcColors.pig.to }}>
+                <span
+                  className="h-2.5 w-4 rounded-full shadow-xs shrink-0"
+                  style={{
+                    background: `linear-gradient(90deg, ${currentArcColors.pig.from}, ${currentArcColors.pig.to})`,
+                  }}
+                />
+                <span>Trại heo ({currentArcColors.pig.from} → {currentArcColors.pig.to})</span>
               </span>
             </div>
           </div>
+
+          {isAdmin && onSaveArcColors && (
+            <div className="mt-2 rounded-2xl border border-[#2b8fd0]/30 bg-sky-50/90 p-2.5 text-xs">
+              <div className="flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={() => setIsEditingArcs((prev) => !prev)}
+                  className="flex items-center gap-1.5 font-bold text-[#2b8fd0] cursor-pointer"
+                >
+                  <Sparkles className="h-3.5 w-3.5" />
+                  <span>Tuỳ chỉnh màu tia cung ứng {isEditingArcs ? '▲' : '▼'}</span>
+                </button>
+                {hasUnsavedArcs && (
+                  <span className="text-[10px] font-extrabold text-amber-600 animate-pulse">Chưa lưu</span>
+                )}
+              </div>
+
+              {isEditingArcs && (
+                <div className="mt-2.5 space-y-3">
+                  <div className="flex flex-wrap gap-1">
+                    <span className="text-[10px] font-bold text-emerald-950/70 self-center mr-1">Bộ phối:</span>
+                    {PRESET_PALETTES.map((pal) => (
+                      <button
+                        key={pal.name}
+                        type="button"
+                        onClick={() => setDraftArcColors(pal.name === 'Mặc định' ? { chicken: { from: '#FACC15', to: '#F97316' }, pig: { from: '#FACC15', to: '#FB7185' } } : pal)}
+                        className="rounded-full border border-emerald-950/15 bg-white px-2 py-0.5 text-[10px] font-bold text-[#0f2a24] hover:border-[#2b8fd0] cursor-pointer"
+                      >
+                        {pal.name}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Chicken */}
+                  <div className="rounded-xl border border-emerald-950/10 bg-white/80 p-2">
+                    <div className="mb-1 text-[11px] font-extrabold" style={{ color: draftArcColors.chicken.to }}>Trại gà (Chicken):</div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="block text-[10px] font-bold text-emerald-950/60">Màu đầu (Nhà máy):</label>
+                        <div className="flex items-center gap-1.5 mt-0.5">
+                          <input
+                            type="color"
+                            value={draftArcColors.chicken.from}
+                            onChange={(e) => setDraftArcColors({ ...draftArcColors, chicken: { ...draftArcColors.chicken, from: e.target.value } })}
+                            className="h-7 w-7 rounded border border-emerald-950/20 cursor-pointer"
+                          />
+                          <input
+                            type="text"
+                            value={draftArcColors.chicken.from}
+                            onChange={(e) => setDraftArcColors({ ...draftArcColors, chicken: { ...draftArcColors.chicken, from: e.target.value } })}
+                            className="w-20 rounded border border-emerald-950/20 px-1.5 py-1 text-[11px] font-mono uppercase"
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-emerald-950/60">Màu cuối (Trại):</label>
+                        <div className="flex items-center gap-1.5 mt-0.5">
+                          <input
+                            type="color"
+                            value={draftArcColors.chicken.to}
+                            onChange={(e) => setDraftArcColors({ ...draftArcColors, chicken: { ...draftArcColors.chicken, to: e.target.value } })}
+                            className="h-7 w-7 rounded border border-emerald-950/20 cursor-pointer"
+                          />
+                          <input
+                            type="text"
+                            value={draftArcColors.chicken.to}
+                            onChange={(e) => setDraftArcColors({ ...draftArcColors, chicken: { ...draftArcColors.chicken, to: e.target.value } })}
+                            className="w-20 rounded border border-emerald-950/20 px-1.5 py-1 text-[11px] font-mono uppercase"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Pig */}
+                  <div className="rounded-xl border border-emerald-950/10 bg-white/80 p-2">
+                    <div className="mb-1 text-[11px] font-extrabold" style={{ color: draftArcColors.pig.to }}>Trại heo (Pig):</div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="block text-[10px] font-bold text-emerald-950/60">Màu đầu (Nhà máy):</label>
+                        <div className="flex items-center gap-1.5 mt-0.5">
+                          <input
+                            type="color"
+                            value={draftArcColors.pig.from}
+                            onChange={(e) => setDraftArcColors({ ...draftArcColors, pig: { ...draftArcColors.pig, from: e.target.value } })}
+                            className="h-7 w-7 rounded border border-emerald-950/20 cursor-pointer"
+                          />
+                          <input
+                            type="text"
+                            value={draftArcColors.pig.from}
+                            onChange={(e) => setDraftArcColors({ ...draftArcColors, pig: { ...draftArcColors.pig, from: e.target.value } })}
+                            className="w-20 rounded border border-emerald-950/20 px-1.5 py-1 text-[11px] font-mono uppercase"
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-emerald-950/60">Màu cuối (Trại):</label>
+                        <div className="flex items-center gap-1.5 mt-0.5">
+                          <input
+                            type="color"
+                            value={draftArcColors.pig.to}
+                            onChange={(e) => setDraftArcColors({ ...draftArcColors, pig: { ...draftArcColors.pig, to: e.target.value } })}
+                            className="h-7 w-7 rounded border border-emerald-950/20 cursor-pointer"
+                          />
+                          <input
+                            type="text"
+                            value={draftArcColors.pig.to}
+                            onChange={(e) => setDraftArcColors({ ...draftArcColors, pig: { ...draftArcColors.pig, to: e.target.value } })}
+                            className="w-20 rounded border border-emerald-950/20 px-1.5 py-1 text-[11px] font-mono uppercase"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setDraftArcColors({ chicken: { from: '#FACC15', to: '#F97316' }, pig: { from: '#FACC15', to: '#FB7185' } })}
+                      className="rounded-lg border border-emerald-950/15 bg-white px-2.5 py-1 text-[11px] font-bold text-[#0f2a24] cursor-pointer"
+                    >
+                      Khôi phục mặc định
+                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setDraftArcColors(currentArcColors)}
+                        className="rounded-lg bg-emerald-950/10 px-2.5 py-1 text-[11px] font-bold text-[#0f2a24] cursor-pointer"
+                      >
+                        Huỷ
+                      </button>
+                      <button
+                        type="button"
+                        disabled={isSavingArcs}
+                        onClick={async () => {
+                          setIsSavingArcs(true);
+                          setArcSaveError('');
+                          try {
+                            await onSaveArcColors(draftArcColors);
+                          } catch (err) {
+                            setArcSaveError(err instanceof Error ? err.message : 'Lỗi lưu màu');
+                          } finally {
+                            setIsSavingArcs(false);
+                          }
+                        }}
+                        className="rounded-lg bg-[#2b8fd0] px-3.5 py-1 text-[11px] font-extrabold text-white shadow-xs hover:bg-[#1e74ad] disabled:opacity-60 cursor-pointer"
+                      >
+                        {isSavingArcs ? 'Đang lưu...' : 'Lưu màu lên Upstash'}
+                      </button>
+                    </div>
+                  </div>
+                  {arcSaveError && <div className="text-[10px] font-bold text-rose-600">{arcSaveError}</div>}
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Nội dung cuộn dọc */}

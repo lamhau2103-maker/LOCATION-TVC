@@ -89,3 +89,9 @@ export interface PositionDiagnosticItem {
   deviationMeters: number;
   isAccurate: boolean;
 }
+
+export interface ArcColorConfig {
+  chicken: { from: string; to: string };
+  pig: { from: string; to: string };
+}
+

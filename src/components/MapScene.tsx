@@ -22,6 +22,7 @@ import {
 } from '../config';
 import {
   AppStage,
+  ArcColorConfig,
   CentralHub,
   Farm,
   FarmCategory,
@@ -82,6 +83,7 @@ interface MapSceneProps {
   timeOfDay: TimeOfDay;
   liteMode: boolean;
   onSatelliteFallbackToStreet?: () => void;
+  arcColors: ArcColorConfig;
 }
 
 const OPENFREEMAP_GLYPHS_URL =
@@ -744,6 +746,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
       timeOfDay,
       liteMode,
       onSatelliteFallbackToStreet,
+      arcColors,
     },
     ref
   ) => {
@@ -977,6 +980,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         }
         const [farmLng, farmLat] = coords;
         const isPig = farm.category === 'pig';
+        const colors = isPig ? arcColors.pig : arcColors.chicken;
 
         return {
           id: `globe-arc-${farm.id}`,
@@ -984,10 +988,10 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
           startLng: hubLng,
           endLat: farmLat,
           endLng: farmLng,
-          color: ['#facc15', isPig ? '#fb7185' : '#fb923c'],
+          color: [colors.from, colors.to],
         };
       });
-    }, [activeTargetFarms, centralHub, showFactoryArcs]);
+    }, [activeTargetFarms, centralHub, showFactoryArcs, arcColors]);
 
     useImperativeHandle(ref, () => ({
       flyToFarm: (farm: Farm, zoom = 14.5) => {
@@ -3219,6 +3223,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         }
 
         const isPig = farm.category === 'pig';
+        const colors = isPig ? arcColors.pig : arcColors.chicken;
         return {
           farm,
           idx,
@@ -3234,11 +3239,13 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
             number,
             number,
           ],
-          lineColor: isPig ? '#e11d48' : '#ea580c',
-          coreColor: isPig ? '#f43f5e' : '#f97316',
+          lineColor: colors.to,
+          coreColor: colors.to,
+          fromColor: colors.from,
+          toColor: colors.to,
         };
       });
-    }, [activeTargetFarms, centralHub, evaluateQuadraticBezier]);
+    }, [activeTargetFarms, centralHub, evaluateQuadraticBezier, arcColors]);
 
     useEffect(() => {
       let animId: number;
