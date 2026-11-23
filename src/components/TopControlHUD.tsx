@@ -116,8 +116,8 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
   onSearchChange,
   onSearchSubmit,
   onSelectFarm,
-  activeCategories,
-  onToggleCategory,
+  activeCategories: _activeCategories,
+  onToggleCategory: _onToggleCategory,
   biosecurityRadius,
   onRadiusChange,
   onResetToInitial,
@@ -416,32 +416,6 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
       setIsSettingsOpen(false);
     }
   };
-
-  const categoryButtons: Array<{
-    key: FarmCategory;
-    label: string;
-    count: number;
-    color: string;
-  }> = [
-    {
-      key: 'chicken',
-      label: 'Trại gà',
-      count: chickenCount,
-      color: APP_CONFIG.colors.categories.chicken.hex,
-    },
-    {
-      key: 'pig',
-      label: 'Trại heo',
-      count: pigCount,
-      color: APP_CONFIG.colors.categories.pig.hex,
-    },
-    {
-      key: 'other',
-      label: 'Khác',
-      count: otherCount,
-      color: APP_CONFIG.colors.categories.other.hex,
-    },
-  ];
 
   const timeOptions: Array<{
     key: TimeOfDay;
@@ -863,25 +837,6 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
             <span className="shrink-0 text-[11px] font-extrabold whitespace-nowrap text-[#0f2a24]">
               {farms.length} trại
             </span>
-
-            {categoryButtons.map((btn) => {
-              const isActive = activeCategories[btn.key];
-              return (
-                <button
-                  key={btn.key}
-                  type="button"
-                  onClick={() => onToggleCategory(btn.key)}
-                  className={`flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-extrabold transition-all cursor-pointer ${
-                    isActive
-                      ? 'bg-white text-[#0f2a24] shadow-2xs ring-1 ring-[#2b8fd0]/20'
-                      : 'opacity-45'
-                  }`}
-                >
-                  <CuteCategoryIcon category={btn.key} className="h-3.5 w-3.5" />
-                  <span>{btn.count}</span>
-                </button>
-              );
-            })}
           </div>
 
           {/* Cụm Phải: Tìm kiếm nhỏ + Nút Trở về + La bàn + Tùy chỉnh */}
@@ -934,11 +889,11 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
                 setIsMobileSearchExpanded(false);
                 onResetToInitial();
               }}
-              title="Trở về ban đầu"
+              title="Góc nhìn địa cầu"
               className="flex h-9 items-center justify-center gap-1.5 rounded-full bg-gradient-to-r from-[#2b8fd0] to-[#10b981] px-3 text-xs font-extrabold text-white shadow-sm cursor-pointer"
             >
               <RotateCcw className="h-3.5 w-3.5" />
-              <span className="hidden md:inline">Trở về ban đầu</span>
+              <span className="hidden md:inline">Góc nhìn địa cầu</span>
             </button>
 
             <button
@@ -1164,32 +1119,7 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
             paddingBottom: 'calc(var(--safe-bottom) + 10px)',
           }}
         >
-          {/* Hàng chip lọc cuộn ngang ngay phía trên Bottom Dock (không cắt chữ trên màn hình 320px/360px) */}
-          <div className="pointer-events-auto flex w-full items-center justify-start gap-1.5 overflow-x-auto px-0.5 py-0.5 no-scrollbar min-[390px]:justify-center">
-            {categoryButtons.map((btn) => {
-              const isActive = activeCategories[btn.key];
-              return (
-                <button
-                  key={btn.key}
-                  type="button"
-                  onClick={() => onToggleCategory(btn.key)}
-                  className={`flex min-h-[40px] shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-bold whitespace-nowrap transition-all ${
-                    isActive
-                      ? 'glass-panel bg-white/95 text-[#0f2a24] shadow-xs ring-1 ring-[#2b8fd0]/25'
-                      : 'glass-panel bg-white/60 text-emerald-950/45 opacity-65'
-                  }`}
-                >
-                  <CuteCategoryIcon category={btn.key} className="h-4 w-4 shrink-0" />
-                  <span>{btn.label}</span>
-                  <span className="font-mono-tabular text-[11px] opacity-70">
-                    ({btn.count})
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-
-          {/* Thanh Dock chính: Nút Tìm kiếm / Danh sách điểm (bung rộng khi bấm) + Nút Trở về ban đầu */}
+          {/* Thanh Dock chính: Nút Tìm kiếm / Danh sách điểm (bung rộng khi bấm) + Nút Góc nhìn địa cầu */}
           <div
             ref={mobileDropdownWrapperRef}
             className="pointer-events-auto relative flex items-center gap-2"
@@ -1261,7 +1191,7 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
                   className="flex h-11 flex-1 items-center justify-center gap-2 rounded-full bg-gradient-to-r from-[#2b8fd0] to-[#10b981] px-5 text-xs font-extrabold tracking-wide text-white shadow-lg"
                 >
                   <RotateCcw className="h-4 w-4" />
-                  <span>Trở về ban đầu</span>
+                  <span>Góc nhìn địa cầu</span>
                 </button>
               </>
             )}
@@ -1437,7 +1367,7 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
               className="flex h-11 shrink-0 items-center gap-2 rounded-full bg-gradient-to-r from-[#2b8fd0] to-[#10b981] px-4 text-xs font-extrabold tracking-wide whitespace-nowrap text-white shadow-[0_8px_20px_rgba(43,143,208,0.3)] transition-all cursor-pointer"
             >
               <RotateCcw className="h-4 w-4" />
-              <span>Trở về ban đầu</span>
+              <span>Góc nhìn địa cầu</span>
             </motion.button>
 
             {/* 2. Nút tròn La bàn (44x44px) */}
@@ -1582,35 +1512,6 @@ export const TopControlHUD: React.FC<TopControlHUDProps> = ({
               )}
             </button>
             {renderLocationDropdownList(false)}
-          </div>
-
-          {/* Chip lọc theo loại trang trại */}
-          <div className="glass-panel flex max-w-full shrink-0 items-center gap-1 overflow-x-auto rounded-full p-1 no-scrollbar">
-            {categoryButtons.map((btn) => {
-              const isActive = activeCategories[btn.key];
-              return (
-                <motion.button
-                  key={btn.key}
-                  type="button"
-                  whileHover={{ y: -1 }}
-                  whileTap={{ scale: 0.96 }}
-                  onClick={() => onToggleCategory(btn.key)}
-                  className={`flex min-h-[34px] shrink-0 items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold whitespace-nowrap transition-all cursor-pointer lg:px-3.5 ${
-                    isActive
-                      ? 'bg-white text-[#0f2a24] shadow-xs ring-1 ring-[#2b8fd0]/20'
-                      : 'text-emerald-950/45 opacity-60 hover:opacity-90'
-                  }`}
-                >
-                  <span style={{ color: btn.color }}>
-                    <CuteCategoryIcon category={btn.key} className="h-4 w-4" />
-                  </span>
-                  <span>{btn.label}</span>
-                  <span className="font-mono-tabular text-[11px] text-emerald-950/60">
-                    ({btn.count})
-                  </span>
-                </motion.button>
-              );
-            })}
           </div>
         </motion.div>
         </div>
