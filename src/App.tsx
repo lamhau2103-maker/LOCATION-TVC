@@ -1754,6 +1754,11 @@ export default function App() {
           </span>
         </div>
       )}
+
+      {/* Tác giả ở góc dưới phải màn hình */}
+      <div className="pointer-events-none fixed right-3 bottom-1.5 z-20 flex items-center rounded-full bg-white/85 px-2.5 py-0.5 text-[10px] font-extrabold text-[#0f2a24]/75 shadow-xs backdrop-blur-md">
+        <span>by Phuc Hau HR</span>
+      </div>
     </div>
   );
 }

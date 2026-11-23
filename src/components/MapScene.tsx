@@ -864,31 +864,23 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
       onSatelliteFallbackToStreet,
     };
 
-    // Danh sách các trại Gà & Heo đang bật kết nối một chiều từ Nhà Máy Cám thật trong dữ liệu My Maps
+    // Danh sách các trại Gà & Heo đang bật kết nối một chiều từ Nhà Máy Cám thật trong dữ liệu My Maps (mặc định hiển thị tất cả)
     const activeTargetFarms = useMemo(() => {
       if (!centralHub) return [];
       const hubId = centralHub.id;
-      if (isHubSelected) {
-        return visibleFarms.filter(
-          (f) =>
-            !f.isFeedMill &&
-            f.id !== hubId &&
-            f.isConnectable &&
-            (f.category === 'chicken' || f.category === 'pig')
-        );
-      }
+      const connectable = visibleFarms.filter(
+        (f) =>
+          !f.isFeedMill &&
+          f.id !== hubId &&
+          f.isConnectable &&
+          (f.category === 'chicken' || f.category === 'pig')
+      );
       if (singleArcFarmId) {
-        return visibleFarms.filter(
-          (f) =>
-            f.id === singleArcFarmId &&
-            !f.isFeedMill &&
-            f.id !== hubId &&
-            f.isConnectable &&
-            (f.category === 'chicken' || f.category === 'pig')
-        );
+        const single = connectable.filter((f) => f.id === singleArcFarmId);
+        return single.length > 0 ? single : connectable;
       }
-      return [];
-    }, [centralHub, isHubSelected, singleArcFarmId, visibleFarms]);
+      return connectable;
+    }, [centralHub, singleArcFarmId, visibleFarms]);
 
     // Dữ liệu ghim icon 3D (`customLayerData`) trên Quả địa cầu 3D (`globe.gl`) — CHỈ gồm các điểm thật từ My Maps
     const globePinData = useMemo<GlobeCustomPinDatum[]>(() => {
@@ -2553,6 +2545,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
       const queryInteractiveFeatureAtPoint = (point: maplibregl.Point) => {
         const activeLayers = [
           'hub-icon',
+          'hub-label',
           'farm-selected',
           'farm-hovered',
           'farm-icons',
@@ -2562,8 +2555,8 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         if (activeLayers.length === 0) return null;
 
         const touchBox: [maplibregl.PointLike, maplibregl.PointLike] = [
-          [point.x - 22, point.y - 22],
-          [point.x + 22, point.y + 22],
+          [point.x - 26, point.y - 26],
+          [point.x + 26, point.y + 26],
         ];
         const feats = map.queryRenderedFeatures(touchBox, {
           layers: activeLayers,
@@ -2572,7 +2565,13 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         if (feats.length === 0) return null;
         if (feats.length === 1) return feats[0];
 
-        const hubFeat = feats.find((f) => f.layer?.id === 'hub-icon');
+        const hubFeat = feats.find(
+          (f) =>
+            f.layer?.id === 'hub-icon' ||
+            f.layer?.id === 'hub-label' ||
+            f.properties?.isHub ||
+            f.properties?.isFeedMill
+        );
         if (hubFeat) return hubFeat;
 
         let bestFeat = feats[0];
