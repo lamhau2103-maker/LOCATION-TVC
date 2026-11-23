@@ -504,11 +504,47 @@ export default function App() {
     };
   });
 
+  const isDebugMode = useMemo(() => {
+    if (typeof window === 'undefined') return false;
+    return new URLSearchParams(window.location.search).get('debug') === '1';
+  }, []);
+
   // 6. Tự động lấy "Nhà Máy Cám" trực tiếp từ dữ liệu Google My Maps làm tâm phát đốm sáng (không tạo điểm cứng giả)
   const feedMillFarm = useMemo<Farm | null>(
     () => farms.find((f) => f.isFeedMill) || null,
     [farms]
   );
+
+  const debugStats = useMemo(() => {
+    const total = farms.length;
+    const chicken = farms.filter((f) => f.category === 'chicken').length;
+    const pig = farms.filter((f) => f.category === 'pig').length;
+    const factory = farms.filter((f) => f.isFeedMill).length;
+    const office = farms.filter((f) => f.subType === 'office').length;
+    const warehouse = farms.filter((f) => f.subType === 'warehouse').length;
+    const wash = farms.filter((f) => f.subType === 'wash').length;
+    const other = farms.filter((f) => f.category === 'other' && !f.isFeedMill).length;
+    const factoryInfo = feedMillFarm
+      ? `${feedMillFarm.name} (${feedMillFarm.lat.toFixed(5)}, ${feedMillFarm.lng.toFixed(5)})`
+      : 'KHÔNG TÌM THẤY';
+    const connectableCount = farms.filter(
+      (f) => !f.isFeedMill && f.isConnectable && (f.category === 'chicken' || f.category === 'pig')
+    ).length;
+
+    return {
+      total,
+      chicken,
+      pig,
+      factory,
+      office,
+      warehouse,
+      wash,
+      other,
+      factoryInfo,
+      arcsCount: connectableCount,
+      particlesCount: connectableCount,
+    };
+  }, [farms, feedMillFarm]);
 
   const centralHub = useMemo<CentralHub | null>(() => {
     if (!feedMillFarm) return null;
@@ -1752,6 +1788,20 @@ export default function App() {
           <span>
             Bấm vào Nhà Máy Cám để hiện đường kết nối · Bấm Ghim trang trại để xem chi tiết
           </span>
+        </div>
+      )}
+
+      {/* Bảng gỡ lỗi tạm thời khi có ?debug=1 trên URL */}
+      {isDebugMode && (
+        <div className="fixed top-3 left-3 z-50 max-w-xs rounded-xl bg-slate-900/90 p-3 text-[11px] font-mono text-white shadow-2xl backdrop-blur-md">
+          <div className="mb-1.5 font-bold text-amber-400">--- BẢNG GỠ LỖI (?debug=1) ---</div>
+          <div>Tổng số điểm: {debugStats.total}</div>
+          <div>- Trại gà: {debugStats.chicken} | Trại heo: {debugStats.pig}</div>
+          <div>- Nhà máy: {debugStats.factory} | Văn phòng: {debugStats.office}</div>
+          <div>- Kho: {debugStats.warehouse} | Rửa xe: {debugStats.wash} | Khác: {debugStats.other}</div>
+          <div className="mt-1 truncate text-emerald-400">Nhà máy: {debugStats.factoryInfo}</div>
+          <div>Số đường cung: {debugStats.arcsCount}</div>
+          <div>Số đốm sáng: {debugStats.particlesCount}</div>
         </div>
       )}
 

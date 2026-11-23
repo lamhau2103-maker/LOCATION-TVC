@@ -108,36 +108,61 @@ export function matchesIncludeKeywords(rawLayerAndName: string): boolean {
   });
 }
 
+export const FACTORY_CONFIG = {
+  nameKeywords: [
+    'feed factory',
+    'feedfactory',
+    'feed mill',
+    'feedmill',
+    'nhà máy cám',
+    'nha may cam',
+    'nhà máy thức ăn',
+    'nha may thuc an',
+    'nhà máy',
+    'nha may',
+  ],
+  displayNameVi: 'Nhà Máy Cám',
+  displayNameEn: 'FEED FACTORY',
+  coordsOverride: null as [number, number] | null,
+};
+
 /**
  * Tìm điểm "Nhà Máy Cám" thực tế trong dữ liệu Google My Maps đã nạp.
- * Ưu tiên tên chứa "nha may cam" (không dấu, chữ thường), dự phòng chứa "nha may".
+ * Chuẩn hoá chuỗi, bỏ dấu, không phân biệt hoa thường, so khớp trên tên, loại/thư mục và mô tả.
  */
 export function findFeedMill<
-  T extends { id?: string; name?: string; type?: string; lat: number; lng: number }
+  T extends { id?: string; name?: string; type?: string; description?: string; lat: number; lng: number }
 >(locations: T[]): T | null {
   if (!locations || locations.length === 0) return null;
 
-  const exactNameMatch = locations.find((loc) =>
-    normalizeMatchText(loc.name || '').includes('nha may cam')
-  );
-  if (exactNameMatch) return exactNameMatch;
+  if (FACTORY_CONFIG.coordsOverride) {
+    const [targetLat, targetLng] = FACTORY_CONFIG.coordsOverride;
+    const found = locations.find(
+      (loc) =>
+        Math.abs(Number(loc.lat) - targetLat) < 0.0001 &&
+        Math.abs(Number(loc.lng) - targetLng) < 0.0001
+    );
+    if (found) return found;
+  }
 
-  const combinedMatch = locations.find((loc) =>
-    normalizeMatchText(`${loc.type || ''} ${loc.name || ''}`).includes(
-      'nha may cam'
-    )
-  );
-  if (combinedMatch) return combinedMatch;
+  for (const kw of FACTORY_CONFIG.nameKeywords) {
+    const normKw = normalizeMatchText(kw);
+    if (!normKw) continue;
 
-  const fallbackNameMatch = locations.find((loc) =>
-    normalizeMatchText(loc.name || '').includes('nha may')
-  );
-  if (fallbackNameMatch) return fallbackNameMatch;
+    const matched = locations.find((loc) => {
+      const combined = normalizeMatchText(
+        `${loc.name || ''} ${loc.type || ''} ${loc.description || ''}`
+      );
+      return combined.includes(normKw);
+    });
+    if (matched) return matched;
+  }
 
-  const fallbackCombined = locations.find((loc) =>
-    normalizeMatchText(`${loc.type || ''} ${loc.name || ''}`).includes('nha may')
-  );
-  return fallbackCombined || null;
+  const fallback = locations.find((loc) => {
+    const norm = normalizeMatchText(`${loc.name || ''} ${loc.type || ''}`);
+    return norm.includes('may') || norm.includes('feed') || norm.includes('cam');
+  });
+  return fallback || null;
 }
 
 export function isFeedMillText(rawType = '', rawName = ''): boolean {
