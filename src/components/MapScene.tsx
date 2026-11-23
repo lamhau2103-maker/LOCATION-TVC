@@ -15,9 +15,12 @@ import { motion } from 'framer-motion';
 import {
   APP_CONFIG,
   ARC_LINE_WEIGHT,
+  FACTORY_FLY_DURATION_MS,
+  FACTORY_FOCUS_ZOOM,
   getCategoryConfig,
   MAP_TILE_PRELOAD_CONFIG,
   MAP_ZOOM_CONFIG,
+  OPEN_FACTORY_CARD_ON_ENTER,
   RESPONSIVE_BREAKPOINTS,
 } from '../config';
 import {
@@ -844,6 +847,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
       onSelectFarm,
       onSelectHub,
       onClearSelection,
+      onEnterMapOverview,
       onSatelliteFallbackToStreet,
     });
 
@@ -864,6 +868,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
       onSelectFarm,
       onSelectHub,
       onClearSelection,
+      onEnterMapOverview,
       onSatelliteFallbackToStreet,
     };
 
@@ -1045,18 +1050,19 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         if (map && latestStateRef.current.stage === 'map') {
           const hubLng = Number(centralHub.lng);
           const hubLat = Number(centralHub.lat);
+          const hasCard = Boolean(latestStateRef.current.isHubSelected);
           const padding = computeCameraPadding(
-            true,
+            hasCard,
             latestStateRef.current.mobileSheetSnap
           );
           map.resize();
           map.flyTo({
             center: [hubLng, hubLat],
-            zoom: 13.5,
+            zoom: FACTORY_FOCUS_ZOOM,
             pitch: 0,
             bearing: 0,
             padding,
-            duration: MAP_ZOOM_CONFIG.flyToDurationMs,
+            duration: FACTORY_FLY_DURATION_MS,
             essential: true,
           });
         }
@@ -1065,55 +1071,43 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
             {
               lat: Number(centralHub.lat),
               lng: Number(centralHub.lng),
-              altitude: Math.min(1.05, getResponsiveGlobeAltitude() * 0.45),
+              altitude: Math.min(1.15, getResponsiveGlobeAltitude() * 0.48),
             },
-            1300
+            FACTORY_FLY_DURATION_MS
           );
         }
       },
       flyToConnectedOverview: () => {
-        const connectableList = visibleFarms.filter(
-          (f) =>
-            f.isConnectable &&
-            (f.category === 'chicken' || f.category === 'pig')
-        );
-        const listForBounds =
-          connectableList.length > 0 ? connectableList : visibleFarms;
-        const { center, zoom } = getSystemCenterAndZoom(
-          listForBounds,
-          centralHub
-        );
-
-        // Nếu đang ở Quả địa cầu 3D: xoay mượt tới vùng phủ Việt Nam để thấy rõ các đốm sáng chạy trên Địa cầu
-        if (globeRef.current) {
-          globeRef.current.pointOfView(
-            {
-              lat: center[1],
-              lng: center[0],
-              altitude: Math.min(1.25, getResponsiveGlobeAltitude() * 0.52),
-            },
-            1400
-          );
-        }
-
-        // Đồng bộ sẵn góc nhìn bao quát trên Bản đồ 2D phẳng (pitch: 0)
+        if (!centralHub) return;
         const map = mapRef.current;
-        if (map) {
+        if (map && latestStateRef.current.stage === 'map') {
+          const hubLng = Number(centralHub.lng);
+          const hubLat = Number(centralHub.lat);
+          const hasCard = Boolean(latestStateRef.current.isHubSelected);
           const padding = computeCameraPadding(
-            true,
+            hasCard,
             latestStateRef.current.mobileSheetSnap
           );
-          const targetZoom = Math.min(Math.max(zoom - 0.25, 7.2), 13.8);
           map.resize();
           map.flyTo({
-            center,
-            zoom: targetZoom,
+            center: [hubLng, hubLat],
+            zoom: FACTORY_FOCUS_ZOOM,
             pitch: 0,
             bearing: 0,
             padding,
-            duration: MAP_ZOOM_CONFIG.flyToDurationMs,
+            duration: FACTORY_FLY_DURATION_MS,
             essential: true,
           });
+        }
+        if (globeRef.current) {
+          globeRef.current.pointOfView(
+            {
+              lat: Number(centralHub.lat),
+              lng: Number(centralHub.lng),
+              altitude: Math.min(1.15, getResponsiveGlobeAltitude() * 0.48),
+            },
+            FACTORY_FLY_DURATION_MS
+          );
         }
       },
       flyToGlobe: () => {
@@ -1208,7 +1202,28 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
     // =========================================================================
     useEffect(() => {
       const container = globeContainerRef.current;
-      if (!container || globeRef.current) return;
+      if (!container) return;
+
+      let startX = 0;
+      let startY = 0;
+
+      const handlePointerDown = (e: PointerEvent) => {
+        startX = e.clientX;
+        startY = e.clientY;
+        (container as any).__isGlobeDragging = false;
+      };
+
+      const handlePointerMove = (e: PointerEvent) => {
+        const dist = Math.hypot(e.clientX - startX, e.clientY - startY);
+        if (dist > 8) {
+          (container as any).__isGlobeDragging = true;
+        }
+      };
+
+      container.addEventListener('pointerdown', handlePointerDown);
+      container.addEventListener('pointermove', handlePointerMove);
+
+      if (globeRef.current) return;
 
       const globe = new Globe(container, {
         animateIn: false,
@@ -1284,10 +1299,33 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         .onCustomLayerClick((obj: object) => {
           const item = obj as GlobeCustomPinDatum;
           if (!item) return;
-          if (item.isHub) {
-            latestStateRef.current.onSelectHub();
-          } else if (item.farm) {
-            latestStateRef.current.onSelectFarm(item.farm);
+          if ((container as any).__isGlobeDragging) {
+            return;
+          }
+
+          if (latestStateRef.current.stage === 'globe') {
+            latestStateRef.current.onEnterMapOverview();
+            window.setTimeout(() => {
+              const hub = latestStateRef.current.centralHub;
+              const map = mapRef.current;
+              if (hub && map) {
+                map.flyTo({
+                  center: [Number(hub.lng), Number(hub.lat)],
+                  zoom: 13.5,
+                  duration: 1500,
+                  essential: true,
+                });
+              }
+              if (OPEN_FACTORY_CARD_ON_ENTER) {
+                latestStateRef.current.onSelectHub();
+              }
+            }, 60);
+          } else {
+            if (item.isHub) {
+              latestStateRef.current.onSelectHub();
+            } else if (item.farm) {
+              latestStateRef.current.onSelectFarm(item.farm);
+            }
           }
         })
         .onCustomLayerHover((obj: object | null) => {

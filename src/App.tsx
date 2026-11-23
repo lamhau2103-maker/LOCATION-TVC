@@ -12,7 +12,7 @@ import React, {
 } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { CheckCircle2, Sparkles } from 'lucide-react';
-import { APP_CONFIG, getAutoTimeOfDay } from './config';
+import { APP_CONFIG, OPEN_FACTORY_CARD_ON_ENTER, getAutoTimeOfDay } from './config';
 import defaultFarmsData from './data/farms.json';
 import {
   AppStage,
@@ -32,6 +32,7 @@ import {
   findFeedMill,
   getFarmKey,
   getLocationDisplayLabel,
+  getStableFarmId,
   isConnectableFarm,
   resolveFarmIconType,
   resolveFarmSubType,
@@ -458,6 +459,7 @@ export default function App() {
   const [isBulkIconModalOpen, setIsBulkIconModalOpen] = useState(false);
   const [isPositionDiagOpen, setIsPositionDiagOpen] = useState(false);
 
+
   const handleSaveArcColors = useCallback(
     async (nextColors: ArcColorConfig) => {
       const res = await fetch('/api/icons', {
@@ -619,6 +621,53 @@ export default function App() {
         : null,
     [farms, selectedFarmId]
   );
+
+  // Xử lý deep link (?p=...) khi khởi động
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const p = params.get('p');
+      if (p) {
+        setStage('map');
+        if (p === 'feed-factory') {
+          setIsHubSelected(true);
+          setTimeout(() => {
+            mapSceneRef.current?.flyToHub();
+          }, 400);
+        } else {
+          const found = farms.find((f) => getStableFarmId(f) === p || f.id === p);
+          if (found) {
+            setSelectedFarmId(found.id);
+            setSingleArcFarmId(null);
+            setTimeout(() => {
+              mapSceneRef.current?.flyToFarm(found, 15.8);
+            }, 400);
+          }
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }, [farms]);
+
+  // Cập nhật query parameter ?p=... trên URL khi chọn/đóng điểm
+  useEffect(() => {
+    try {
+      const url = new URL(window.location.href);
+      if (selectedFarm) {
+        url.searchParams.set('p', getStableFarmId(selectedFarm));
+        window.history.replaceState(null, '', url.toString());
+      } else if (isHubSelected && centralHub) {
+        url.searchParams.set('p', 'feed-factory');
+        window.history.replaceState(null, '', url.toString());
+      } else {
+        url.searchParams.delete('p');
+        window.history.replaceState(null, '', url.toString());
+      }
+    } catch {
+      // ignore
+    }
+  }, [selectedFarm, isHubSelected, centralHub]);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [activeCategories, setActiveCategories] = useState<
@@ -1453,13 +1502,32 @@ export default function App() {
   // Cách vào bản đồ (a): Bấm vào một điểm trang trại trên địa cầu (hoặc trên bản đồ) -> bay tới và mở card
   const handleSelectFarm = useCallback(
     (farm: Farm) => {
+      if (stage === 'globe') {
+        setStage('map');
+        soundEngine.playWhoosh(soundEnabled, 1.8);
+        if (OPEN_FACTORY_CARD_ON_ENTER) {
+          if (farm.isFeedMill || (centralHub?.id && farm.id === centralHub.id)) {
+            handleSelectHub();
+          } else {
+            setIsHubSelected(false);
+            setSelectedFarmId(farm.id);
+            setMobileSheetSnap('half');
+            soundEngine.playPing(soundEnabled);
+            mapSceneRef.current?.flyToFarm(farm, 15.8);
+          }
+        } else {
+          setIsHubSelected(false);
+          setSelectedFarmId(null);
+          setSingleArcFarmId(null);
+          mapSceneRef.current?.flyToHub();
+        }
+        return;
+      }
+
       // Nếu người dùng chọn đúng "Nhà Máy Cám" -> bật luôn mạng lưới cung ứng & thẻ Nhà Máy Cám
       if (farm.isFeedMill || (centralHub?.id && farm.id === centralHub.id)) {
         handleSelectHub();
         return;
-      }
-      if (stage === 'globe') {
-        setStage('map');
       }
       setIsHubSelected(false);
       setSingleArcFarmId((prev) => (prev === farm.id ? prev : null));

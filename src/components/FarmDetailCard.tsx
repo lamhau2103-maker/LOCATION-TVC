@@ -14,6 +14,7 @@ import {
   Pencil,
   Radio,
   RotateCcw,
+  Share2,
   ShieldAlert,
   ShieldCheck,
   Sparkles,
@@ -38,6 +39,7 @@ import {
   getDefaultLocationLabel,
   getFarmKey,
   getLocationDisplayLabel,
+  getStableFarmId,
   resolveFarmIconType,
 } from '../utils/icons';
 import { CountUp } from './CountUp';
@@ -136,6 +138,15 @@ export const FarmDetailCard: React.FC<FarmDetailCardProps> = ({
   const [isEditingLabel, setIsEditingLabel] = useState(false);
   const [labelInput, setLabelInput] = useState('');
   const [isSavingLabel, setIsSavingLabel] = useState(false);
+  const [isShareMenuOpen, setIsShareMenuOpen] = useState(false);
+  const [shareToast, setShareToast] = useState('');
+
+  const showShareToast = (msg: string) => {
+    setShareToast(msg);
+    setTimeout(() => setShareToast(''), 2000);
+  };
+
+
 
   const deviceMode = useDeviceCardMode();
 
@@ -150,6 +161,34 @@ export const FarmDetailCard: React.FC<FarmDetailCardProps> = ({
   const hasCustomLabel = Boolean(customLabels?.[farmKey]?.trim());
   const defaultAutoLabel = getDefaultLocationLabel(farm);
   const displayCategoryLabel = getLocationDisplayLabel(farm, customLabels);
+
+  const stableId = getStableFarmId(farm);
+  const deepLink = `${window.location.origin}${window.location.pathname}?p=${stableId}`;
+  const mapsLink = `https://www.google.com/maps?q=${farm.lat},${farm.lng}`;
+  const shareText = `${farm.name} – Thái Việt Corporation\nLoại: ${displayCategoryLabel}\nToạ độ: ${farm.lat.toFixed(6)}, ${farm.lng.toFixed(6)}\nGoogle Maps: ${mapsLink}\nXem trên bản đồ: ${deepLink}`;
+
+  const handleShare = () => {
+    if (navigator.share) {
+      navigator.share({
+        title: `${farm.name} – Thái Việt Corporation`,
+        text: shareText,
+        url: deepLink,
+      }).catch(() => {
+        setIsShareMenuOpen(true);
+      });
+    } else {
+      setIsShareMenuOpen((prev) => !prev);
+    }
+  };
+
+  const copyToClipboard = (textToCopy: string, successMsg: string) => {
+    navigator.clipboard?.writeText(textToCopy).then(() => {
+      showShareToast(successMsg);
+      setIsShareMenuOpen(false);
+    }).catch(() => {
+      showShareToast('Không thể sao chép');
+    });
+  };
 
   useEffect(() => {
     setIsEditingLabel(false);
@@ -754,15 +793,72 @@ export const FarmDetailCard: React.FC<FarmDetailCardProps> = ({
               </button>
             )}
 
-            <a
-              href={googleMapsDirectionsUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex min-h-[44px] w-full items-center justify-center gap-2 rounded-full bg-gradient-to-r from-[#2b8fd0] to-[#10b981] px-5 py-2.5 text-xs font-extrabold tracking-wider text-white shadow-[0_8px_20px_rgba(43,143,208,0.32)] transition-shadow hover:shadow-[0_12px_26px_rgba(43,143,208,0.45)] sm:text-sm"
-            >
-              <Navigation className="h-4 w-4 fill-current" />
-              <span>CHỈ ĐƯỜNG GOOGLE MAPS</span>
-            </a>
+            <div className="relative flex gap-2">
+              <button
+                type="button"
+                onClick={handleShare}
+                className="flex min-h-[44px] flex-1 items-center justify-center gap-2 rounded-full border border-emerald-950/20 bg-white/90 px-4 py-2.5 text-xs font-extrabold text-[#0f2a24] shadow-xs hover:border-[#2b8fd0] hover:bg-sky-50 transition-all cursor-pointer"
+              >
+                <Share2 className="h-4 w-4 text-[#2b8fd0]" />
+                <span>Chia sẻ vị trí</span>
+              </button>
+
+              <a
+                href={googleMapsDirectionsUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex min-h-[44px] flex-[1.4] items-center justify-center gap-2 rounded-full bg-gradient-to-r from-[#2b8fd0] to-[#10b981] px-4 py-2.5 text-xs font-extrabold tracking-wider text-white shadow-[0_8px_20px_rgba(43,143,208,0.32)] transition-shadow hover:shadow-[0_12px_26px_rgba(43,143,208,0.45)] sm:text-sm"
+              >
+                <Navigation className="h-4 w-4 fill-current" />
+                <span>CHỈ ĐƯỜNG</span>
+              </a>
+            </div>
+
+            {/* Menu chia sẻ dự phòng */}
+            {isShareMenuOpen && (
+              <div className="absolute inset-x-4 bottom-full mb-2 overflow-hidden rounded-2xl border border-white bg-white/95 p-3 shadow-2xl backdrop-blur-xl z-30 text-xs space-y-1.5">
+                <div className="font-extrabold text-[#0f2a24] pb-1 border-b border-emerald-950/10 flex justify-between items-center">
+                  <span>Chia sẻ vị trí</span>
+                  <button type="button" onClick={() => setIsShareMenuOpen(false)} className="text-emerald-950/50 hover:text-[#d9261c] cursor-pointer">✕</button>
+                </div>
+                {shareToast && (
+                  <div className="rounded-xl bg-emerald-500 px-3 py-1.5 text-center font-bold text-white shadow-xs">
+                    {shareToast}
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={() => copyToClipboard(shareText, 'Đã sao chép nội dung chia sẻ!')}
+                  className="w-full text-left rounded-xl px-3 py-2 font-bold text-[#0f2a24] hover:bg-sky-50 transition-colors cursor-pointer flex items-center gap-2"
+                >
+                  <Copy className="h-3.5 w-3.5 text-[#2b8fd0]" />
+                  <span>Sao chép nội dung chia sẻ</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => copyToClipboard(deepLink, 'Đã sao chép link web app!')}
+                  className="w-full text-left rounded-xl px-3 py-2 font-bold text-[#0f2a24] hover:bg-sky-50 transition-colors cursor-pointer flex items-center gap-2"
+                >
+                  <Copy className="h-3.5 w-3.5 text-[#10b981]" />
+                  <span>Sao chép link web</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => copyToClipboard(googleMapsDirectionsUrl, 'Đã sao chép link Google Maps!')}
+                  className="w-full text-left rounded-xl px-3 py-2 font-bold text-[#0f2a24] hover:bg-sky-50 transition-colors cursor-pointer flex items-center gap-2"
+                >
+                  <Copy className="h-3.5 w-3.5 text-[#f59e0b]" />
+                  <span>Sao chép link Google Maps</span>
+                </button>
+                <div className="pt-1.5 border-t border-emerald-950/10 flex flex-wrap gap-1">
+                  <a href={`https://zalo.me/share?url=${encodeURIComponent(deepLink)}`} target="_blank" rel="noopener noreferrer" className="rounded-lg bg-blue-50 px-2 py-1 text-[10px] font-bold text-blue-600 hover:bg-blue-100">Zalo</a>
+                  <a href={`https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(deepLink)}`} target="_blank" rel="noopener noreferrer" className="rounded-lg bg-indigo-50 px-2 py-1 text-[10px] font-bold text-indigo-600 hover:bg-indigo-100">Facebook</a>
+                  <a href={`https://t.me/share/url?url=${encodeURIComponent(deepLink)}&text=${encodeURIComponent(shareText)}`} target="_blank" rel="noopener noreferrer" className="rounded-lg bg-sky-50 px-2 py-1 text-[10px] font-bold text-sky-600 hover:bg-sky-100">Telegram</a>
+                  <a href={`https://api.whatsapp.com/send?text=${encodeURIComponent(shareText)}`} target="_blank" rel="noopener noreferrer" className="rounded-lg bg-emerald-50 px-2 py-1 text-[10px] font-bold text-emerald-600 hover:bg-emerald-100">WhatsApp</a>
+                  <a href={`mailto:?subject=${encodeURIComponent(`${farm.name} – Thái Việt Corporation`)}&body=${encodeURIComponent(shareText)}`} className="rounded-lg bg-rose-50 px-2 py-1 text-[10px] font-bold text-rose-600 hover:bg-rose-100">Email</a>
+                </div>
+              </div>
+            )}
           </div>
 
           {!isCollapsedMobile && (
@@ -832,7 +928,41 @@ export const HubDetailCard: React.FC<HubDetailCardProps> = ({
   const [isEditingLabel, setIsEditingLabel] = useState(false);
   const [labelInput, setLabelInput] = useState('');
   const [isSavingLabel, setIsSavingLabel] = useState(false);
+  const [isShareMenuOpen, setIsShareMenuOpen] = useState(false);
+  const [shareToast, setShareToast] = useState('');
   const deviceMode = useDeviceCardMode();
+
+  const showShareToast = (msg: string) => {
+    setShareToast(msg);
+    setTimeout(() => setShareToast(''), 2000);
+  };
+
+  const hubDeepLink = `${window.location.origin}${window.location.pathname}?p=feed-factory`;
+  const googleMapsHubUrl = `https://www.google.com/maps/search/?api=1&query=${centralHub.lat},${centralHub.lng}`;
+  const shareHubText = `${centralHub.name} (FEED FACTORY) – Thái Việt Corporation\nLoại: Nhà máy cám\nToạ độ: ${centralHub.lat.toFixed(6)}, ${centralHub.lng.toFixed(6)}\nGoogle Maps: ${googleMapsHubUrl}\nXem trên bản đồ: ${hubDeepLink}`;
+
+  const handleShareHub = () => {
+    if (navigator.share) {
+      navigator.share({
+        title: `${centralHub.name} – Thái Việt Corporation`,
+        text: shareHubText,
+        url: hubDeepLink,
+      }).catch(() => {
+        setIsShareMenuOpen(true);
+      });
+    } else {
+      setIsShareMenuOpen((prev) => !prev);
+    }
+  };
+
+  const copyHubToClipboard = (textToCopy: string, successMsg: string) => {
+    navigator.clipboard?.writeText(textToCopy).then(() => {
+      showShareToast(successMsg);
+      setIsShareMenuOpen(false);
+    }).catch(() => {
+      showShareToast('Không thể sao chép');
+    });
+  };
 
   const currentArcColors = arcColors || {
     chicken: { from: '#FACC15', to: '#F97316' },
@@ -925,8 +1055,6 @@ export const HubDetailCard: React.FC<HubDetailCardProps> = ({
       onClose();
     }
   };
-
-  const googleMapsHubUrl = `https://www.google.com/maps/search/?api=1&query=${centralHub.lat},${centralHub.lng}`;
 
   const wrapperClass =
     deviceMode === 'mobile-landscape'
@@ -1423,15 +1551,74 @@ export const HubDetailCard: React.FC<HubDetailCardProps> = ({
 
         {/* Footer cố định */}
         <div className="relative z-10 shrink-0 border-t border-emerald-950/10 bg-white/75 px-4 py-3 sm:px-5">
-          <a
-            href={googleMapsHubUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex min-h-[44px] w-full items-center justify-center gap-2 rounded-full bg-gradient-to-r from-[#2b8fd0] to-[#10b981] px-5 py-2.5 text-xs font-extrabold tracking-wider text-white shadow-[0_8px_20px_rgba(43,143,208,0.32)] transition-shadow hover:shadow-[0_12px_26px_rgba(43,143,208,0.45)] sm:text-sm"
-          >
-            <Navigation className="h-4 w-4 fill-current" />
-            <span>MỞ VỊ TRÍ NHÀ MÁY TRÊN GOOGLE MAPS</span>
-          </a>
+          <div className="relative flex flex-col gap-2">
+            {shareToast && (
+              <div className="rounded-xl bg-emerald-500 px-3 py-1.5 text-center font-bold text-white shadow-xs">
+                {shareToast}
+              </div>
+            )}
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={handleShareHub}
+                className="flex min-h-[44px] flex-1 items-center justify-center gap-2 rounded-full border border-emerald-950/20 bg-white/90 px-4 py-2.5 text-xs font-extrabold text-[#0f2a24] shadow-xs hover:border-[#2b8fd0] hover:bg-sky-50 transition-all cursor-pointer"
+              >
+                <Share2 className="h-4 w-4 text-[#2b8fd0]" />
+                <span>Chia sẻ vị trí</span>
+              </button>
+
+              <a
+                href={googleMapsHubUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex min-h-[44px] flex-[1.4] items-center justify-center gap-2 rounded-full bg-gradient-to-r from-[#2b8fd0] to-[#10b981] px-4 py-2.5 text-xs font-extrabold tracking-wider text-white shadow-[0_8px_20px_rgba(43,143,208,0.32)] transition-shadow hover:shadow-[0_12px_26px_rgba(43,143,208,0.45)] sm:text-sm"
+              >
+                <Navigation className="h-4 w-4 fill-current" />
+                <span>MỞ GOOGLE MAPS</span>
+              </a>
+            </div>
+
+            {/* Menu chia sẻ dự phòng */}
+            {isShareMenuOpen && (
+              <div className="absolute inset-x-0 bottom-full mb-2 overflow-hidden rounded-2xl border border-white bg-white/95 p-3 shadow-2xl backdrop-blur-xl z-30 text-xs space-y-1.5">
+                <div className="font-extrabold text-[#0f2a24] pb-1 border-b border-emerald-950/10 flex justify-between items-center">
+                  <span>Chia sẻ vị trí nhà máy</span>
+                  <button type="button" onClick={() => setIsShareMenuOpen(false)} className="text-emerald-950/50 hover:text-[#d9261c] cursor-pointer">✕</button>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => copyHubToClipboard(shareHubText, 'Đã sao chép nội dung chia sẻ!')}
+                  className="w-full text-left rounded-xl px-3 py-2 font-bold text-[#0f2a24] hover:bg-sky-50 transition-colors cursor-pointer flex items-center gap-2"
+                >
+                  <Copy className="h-3.5 w-3.5 text-[#2b8fd0]" />
+                  <span>Sao chép nội dung chia sẻ</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => copyHubToClipboard(hubDeepLink, 'Đã sao chép link web app!')}
+                  className="w-full text-left rounded-xl px-3 py-2 font-bold text-[#0f2a24] hover:bg-sky-50 transition-colors cursor-pointer flex items-center gap-2"
+                >
+                  <Copy className="h-3.5 w-3.5 text-[#10b981]" />
+                  <span>Sao chép link web</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => copyHubToClipboard(googleMapsHubUrl, 'Đã sao chép link Google Maps!')}
+                  className="w-full text-left rounded-xl px-3 py-2 font-bold text-[#0f2a24] hover:bg-sky-50 transition-colors cursor-pointer flex items-center gap-2"
+                >
+                  <Copy className="h-3.5 w-3.5 text-[#f59e0b]" />
+                  <span>Sao chép link Google Maps</span>
+                </button>
+                <div className="pt-1.5 border-t border-emerald-950/10 flex flex-wrap gap-1">
+                  <a href={`https://zalo.me/share?url=${encodeURIComponent(hubDeepLink)}`} target="_blank" rel="noopener noreferrer" className="rounded-lg bg-blue-50 px-2 py-1 text-[10px] font-bold text-blue-600 hover:bg-blue-100">Zalo</a>
+                  <a href={`https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(hubDeepLink)}`} target="_blank" rel="noopener noreferrer" className="rounded-lg bg-indigo-50 px-2 py-1 text-[10px] font-bold text-indigo-600 hover:bg-indigo-100">Facebook</a>
+                  <a href={`https://t.me/share/url?url=${encodeURIComponent(hubDeepLink)}&text=${encodeURIComponent(shareHubText)}`} target="_blank" rel="noopener noreferrer" className="rounded-lg bg-sky-50 px-2 py-1 text-[10px] font-bold text-sky-600 hover:bg-sky-100">Telegram</a>
+                  <a href={`https://api.whatsapp.com/send?text=${encodeURIComponent(shareHubText)}`} target="_blank" rel="noopener noreferrer" className="rounded-lg bg-emerald-50 px-2 py-1 text-[10px] font-bold text-emerald-600 hover:bg-emerald-100">WhatsApp</a>
+                  <a href={`mailto:?subject=${encodeURIComponent(`${centralHub.name} – Thái Việt Corporation`)}&body=${encodeURIComponent(shareHubText)}`} className="rounded-lg bg-rose-50 px-2 py-1 text-[10px] font-bold text-rose-600 hover:bg-rose-100">Email</a>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </motion.div>

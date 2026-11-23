@@ -8,6 +8,13 @@ import { FarmCategory, FarmStatus, TimeOfDay } from './types';
 // Độ dày cơ bản (px) của đường cung kết nối Nhà Máy Cám -> Trại Gà / Trại Heo (mảnh hơn 50-60% so với bản cũ)
 export const ARC_LINE_WEIGHT = 2;
 
+// Hằng số cấu hình: có tự động mở bảng Nhà Máy Cám khi bay vào từ quả cầu 3D hay không
+export const OPEN_FACTORY_CARD_ON_ENTER = false;
+
+// Hằng số cấu hình camera khi chọn / bay về FEED FACTORY (Nhà Máy Cám)
+export const FACTORY_FOCUS_ZOOM = 8.5;
+export const FACTORY_FLY_DURATION_MS = 1400;
+
 // Cấu hình tốc độ & độ mượt zoom trên Bản đồ 2D (tương đương zoomSnap / wheelPxPerZoomLevel trên MapLibre GL)
 export const MAP_ZOOM_CONFIG = {
   wheelZoomRate: 1 / 650, // Giảm tốc độ cuộn chuột (mặc định MapLibre 1/450 -> mượt & ít giật hơn)
