@@ -864,9 +864,25 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
       onSatelliteFallbackToStreet,
     };
 
-    // Danh sách các trại Gà & Heo đang bật kết nối một chiều từ Nhà Máy Cám thật trong dữ liệu My Maps (mặc định hiển thị tất cả)
+    const showFactoryArcs = useMemo(() => {
+      if (singleArcFarmId) return true;
+      if (isHubSelected) return true;
+      if (selectedFarm) {
+        if (
+          selectedFarm.isFeedMill ||
+          selectedFarm.subType === 'hub' ||
+          (centralHub?.id && selectedFarm.id === centralHub.id)
+        ) {
+          return true;
+        }
+        return false;
+      }
+      return true;
+    }, [selectedFarm, isHubSelected, singleArcFarmId, centralHub]);
+
+    // Danh sách các trại Gà & Heo đang bật kết nối một chiều từ Nhà Máy Cám thật theo quy tắc showFactoryArcs
     const activeTargetFarms = useMemo(() => {
-      if (!centralHub) return [];
+      if (!centralHub || !showFactoryArcs) return [];
       const hubId = centralHub.id;
       const connectable = visibleFarms.filter(
         (f) =>
@@ -880,7 +896,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         return single.length > 0 ? single : connectable;
       }
       return connectable;
-    }, [centralHub, singleArcFarmId, visibleFarms]);
+    }, [centralHub, singleArcFarmId, visibleFarms, showFactoryArcs]);
 
     // Dữ liệu ghim icon 3D (`customLayerData`) trên Quả địa cầu 3D (`globe.gl`) — CHỈ gồm các điểm thật từ My Maps
     const globePinData = useMemo<GlobeCustomPinDatum[]>(() => {
@@ -944,7 +960,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
 
     // Dữ liệu đường cung đốm sáng một chiều từ Nhà Máy Cám thật ➔ Trại Gà & Trại Heo trên Quả địa cầu 3D
     const globeArcsData = useMemo<GlobeArcDatum[]>(() => {
-      if (!centralHub || activeTargetFarms.length === 0) return [];
+      if (!centralHub || !showFactoryArcs || activeTargetFarms.length === 0) return [];
       let hubCoords: [number, number] = [
         Number(centralHub.lng),
         Number(centralHub.lat),
@@ -971,7 +987,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
           color: ['#facc15', isPig ? '#fb7185' : '#fb923c'],
         };
       });
-    }, [activeTargetFarms, centralHub]);
+    }, [activeTargetFarms, centralHub, showFactoryArcs]);
 
     useImperativeHandle(ref, () => ({
       flyToFarm: (farm: Farm, zoom = 14.5) => {
@@ -2612,6 +2628,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
       };
 
       const queryArcAtPoint = (point: maplibregl.Point) => {
+        if (!showFactoryArcs) return null;
         if (!map.getLayer('supply-bezier-hit')) return null;
         const arcBox: [maplibregl.PointLike, maplibregl.PointLike] = [
           [point.x - 8, point.y - 8],
@@ -3119,7 +3136,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
     useEffect(() => {
       const now = performance.now();
       arcDirtyRef.current = true;
-      if (activeTargetFarms.length > 0) {
+      if (showFactoryArcs && activeTargetFarms.length > 0) {
         prevActiveTargetsRef.current = activeTargetFarms;
         if (
           arcModeRef.current === 'idle' ||
@@ -3137,7 +3154,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
           arcTransitionStartRef.current = now;
         }
       }
-    }, [activeTargetFarms]);
+    }, [activeTargetFarms, showFactoryArcs]);
 
     // Đánh dấu cập nhật highlight đường cung khi điểm đang chọn thay đổi
     useEffect(() => {
@@ -3287,17 +3304,17 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         const elapsedMs = now - arcTransitionStartRef.current;
         let globalFade = 1;
 
-        if (mode === 'growing' && elapsedMs >= 1100) {
+        if (mode === 'growing' && elapsedMs >= 300) {
           arcModeRef.current = 'active';
           arcDirtyRef.current = true;
         } else if (mode === 'shrinking') {
-          if (elapsedMs >= 500) {
+          if (elapsedMs >= 300) {
             arcModeRef.current = 'idle';
             prevActiveTargetsRef.current = [];
             clearSupplyGeoJSONSources();
             return;
           }
-          globalFade = Math.max(0, 1 - elapsedMs / 500);
+          globalFade = Math.max(0, 1 - elapsedMs / 300);
         }
 
         phase += liteMode ? 0.015 : 0.02;
