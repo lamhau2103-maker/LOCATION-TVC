@@ -18,9 +18,10 @@ import {
   FACTORY_FLY_DURATION_MS,
   FACTORY_FOCUS_ZOOM,
   getCategoryConfig,
+  getGlobeEntryZoom,
+  GLOBE_ENTRY_FLY_DURATION_MS,
   MAP_TILE_PRELOAD_CONFIG,
   MAP_ZOOM_CONFIG,
-  OPEN_FACTORY_CARD_ON_ENTER,
   RESPONSIVE_BREAKPOINTS,
 } from '../config';
 import {
@@ -53,6 +54,7 @@ import { AtmosphericCloudsOverlay } from './CursorSpotlight';
 export interface MapSceneHandle {
   flyToFarm: (farm: Farm, zoom?: number) => void;
   flyToOverview: (duration?: number, pitch?: number) => void;
+  flyToGlobeEntry: () => void;
   flyToHub: () => void;
   flyToConnectedOverview: () => void;
   flyToGlobe: () => void;
@@ -998,6 +1000,44 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
       });
     }, [activeTargetFarms, centralHub, showFactoryArcs, arcColors]);
 
+    const executeFlyToGlobeEntry = useCallback(() => {
+      const map = mapRef.current;
+      const hub = latestStateRef.current.centralHub;
+      if (!map) return;
+
+      const fallback = getSystemCenterAndZoom(
+        latestStateRef.current.farms,
+        hub
+      );
+      let targetCenter: [number, number] = fallback.center;
+      if (hub) {
+        let coords: [number, number] = [Number(hub.lng), Number(hub.lat)];
+        if (Math.abs(coords[0]) < 30 && Math.abs(coords[1]) >= 30) {
+          coords = [coords[1], coords[0]];
+        }
+        targetCenter = coords;
+      }
+
+      const rawTargetZoom = getGlobeEntryZoom();
+      const minZoom =
+        typeof map.getMinZoom === 'function' ? map.getMinZoom() : 2;
+      const maxZoom =
+        typeof map.getMaxZoom === 'function' ? map.getMaxZoom() : 19;
+      const targetZoom = Math.max(minZoom, Math.min(maxZoom, rawTargetZoom));
+
+      map.resize();
+      map.flyTo({
+        center: targetCenter,
+        zoom: targetZoom,
+        pitch: 0,
+        bearing: 0,
+        padding: { top: 0, right: 0, bottom: 0, left: 0 },
+        duration: GLOBE_ENTRY_FLY_DURATION_MS,
+        easing: (t) => 1 - Math.pow(1 - t, 3),
+        essential: true,
+      });
+    }, []);
+
     useImperativeHandle(ref, () => ({
       flyToFarm: (farm: Farm, zoom = 14.5) => {
         const map = mapRef.current;
@@ -1044,6 +1084,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
           essential: true,
         });
       },
+      flyToGlobeEntry: executeFlyToGlobeEntry,
       flyToHub: () => {
         if (!centralHub) return;
         const map = mapRef.current;
@@ -1305,21 +1346,6 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
 
           if (latestStateRef.current.stage === 'globe') {
             latestStateRef.current.onEnterMapOverview();
-            window.setTimeout(() => {
-              const hub = latestStateRef.current.centralHub;
-              const map = mapRef.current;
-              if (hub && map) {
-                map.flyTo({
-                  center: [Number(hub.lng), Number(hub.lat)],
-                  zoom: 13.5,
-                  duration: 1500,
-                  essential: true,
-                });
-              }
-              if (OPEN_FACTORY_CARD_ON_ENTER) {
-                latestStateRef.current.onSelectHub();
-              }
-            }, 60);
           } else {
             if (item.isHub) {
               latestStateRef.current.onSelectHub();
@@ -2461,13 +2487,17 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         esriMaxZoomRef.current
       );
 
-      const { center, zoom } = getSystemCenterAndZoom(farms, centralHub);
+      const { center } = getSystemCenterAndZoom(farms, centralHub);
+      const initialCenter: [number, number] = centralHub
+        ? [Number(centralHub.lng), Number(centralHub.lat)]
+        : center;
+      const initialZoom = Math.max(2, getGlobeEntryZoom() - 2);
 
       const map = new maplibregl.Map({
         container: mapContainerRef.current,
         style: initialStyle,
-        center,
-        zoom: Math.min(zoom, 15),
+        center: initialCenter,
+        zoom: initialZoom,
         minZoom: 2,
         maxZoom: 19,
         pitch: 0,
@@ -2925,15 +2955,19 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
           const m = mapRef.current;
           if (!m) return;
           try {
-            const preservedCenter = m.getCenter();
-            const preservedZoom = m.getZoom();
-            m.resize();
-            m.jumpTo({
-              center: preservedCenter,
-              zoom: preservedZoom,
-              pitch: 0,
-              bearing: 0,
-            });
+            if (m.isMoving()) {
+              m.resize();
+            } else {
+              const preservedCenter = m.getCenter();
+              const preservedZoom = m.getZoom();
+              m.resize();
+              m.jumpTo({
+                center: preservedCenter,
+                zoom: preservedZoom,
+                pitch: 0,
+                bearing: 0,
+              });
+            }
             arcDirtyRef.current = true;
           } catch {
             // ignore

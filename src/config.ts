@@ -8,6 +8,21 @@ import { FarmCategory, FarmStatus, TimeOfDay } from './types';
 // Độ dày cơ bản (px) của đường cung kết nối Nhà Máy Cám -> Trại Gà / Trại Heo (mảnh hơn 50-60% so với bản cũ)
 export const ARC_LINE_WEIGHT = 2;
 
+// Hằng số cấu hình camera khi bay từ Quả địa cầu 3D vào Bản đồ chi tiết bên trong (tâm FEED FACTORY, mức zoom cấp vùng)
+export const GLOBE_ENTRY_ZOOM = 9;
+export const GLOBE_ENTRY_FLY_DURATION_MS = 2000;
+
+// Tự động giảm nhẹ 0.5 đơn vị trên điện thoại màn hình nhỏ (< 640px) để giữ góc nhìn bao quát tương đương
+export function getGlobeEntryZoom(): number {
+  if (
+    typeof window !== 'undefined' &&
+    window.innerWidth <= RESPONSIVE_BREAKPOINTS.mobileMax
+  ) {
+    return Math.max(2, GLOBE_ENTRY_ZOOM - 0.5);
+  }
+  return GLOBE_ENTRY_ZOOM;
+}
+
 // Hằng số cấu hình: có tự động mở bảng Nhà Máy Cám khi bay vào từ quả cầu 3D hay không
 export const OPEN_FACTORY_CARD_ON_ENTER = false;
 

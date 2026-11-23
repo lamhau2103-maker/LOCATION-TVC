@@ -1477,9 +1477,24 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleClearSelection, isHubSelected, selectedFarmId, singleArcFarmId]);
 
+  // Hàm dùng chung duy nhất khi chuyển từ Quả địa cầu 3D vào Bản đồ bên trong (tâm FEED FACTORY, zoom GLOBE_ENTRY_ZOOM)
+  const enterMapFromGlobe = useCallback(() => {
+    setSelectedFarmId(null);
+    setSingleArcFarmId(null);
+    setIsHubSelected(OPEN_FACTORY_CARD_ON_ENTER);
+    setMobileSheetSnap('half');
+    setStage('map');
+    soundEngine.playWhoosh(soundEnabled, 1.8);
+    mapSceneRef.current?.flyToGlobeEntry();
+  }, [soundEnabled]);
+
   // Bấm vào Icon Nhà Máy Cám (điểm thật từ My Maps) -> bắn các đường cung từ Nhà Máy Cám tới các Trại gà & Trại heo
   const handleSelectHub = useCallback(() => {
     if (!centralHub) return;
+    if (stage === 'globe') {
+      enterMapFromGlobe();
+      return;
+    }
     setSelectedFarmId(null);
     setSingleArcFarmId(null);
     setIsHubSelected(true);
@@ -1487,40 +1502,27 @@ export default function App() {
     soundEngine.playPing(soundEnabled);
     soundEngine.playWhoosh(soundEnabled, 1.5);
     mapSceneRef.current?.flyToConnectedOverview();
-  }, [centralHub, soundEnabled]);
+  }, [centralHub, stage, enterMapFromGlobe, soundEnabled]);
 
   // Cách vào bản đồ (e): Bấm nút tròn nhỏ "Xem bản đồ chi tiết" ở góc dưới địa cầu hoặc nút la bàn
   const handleEnterMapOverview = useCallback(() => {
+    if (stage === 'globe') {
+      enterMapFromGlobe();
+      return;
+    }
     setSelectedFarmId(null);
     setIsHubSelected(false);
     setSingleArcFarmId(null);
     setStage('map');
     soundEngine.playWhoosh(soundEnabled, 1.8);
     mapSceneRef.current?.flyToOverview(1800, 0);
-  }, [soundEnabled]);
+  }, [stage, enterMapFromGlobe, soundEnabled]);
 
   // Cách vào bản đồ (a): Bấm vào một điểm trang trại trên địa cầu (hoặc trên bản đồ) -> bay tới và mở card
   const handleSelectFarm = useCallback(
     (farm: Farm) => {
       if (stage === 'globe') {
-        setStage('map');
-        soundEngine.playWhoosh(soundEnabled, 1.8);
-        if (OPEN_FACTORY_CARD_ON_ENTER) {
-          if (farm.isFeedMill || (centralHub?.id && farm.id === centralHub.id)) {
-            handleSelectHub();
-          } else {
-            setIsHubSelected(false);
-            setSelectedFarmId(farm.id);
-            setMobileSheetSnap('half');
-            soundEngine.playPing(soundEnabled);
-            mapSceneRef.current?.flyToFarm(farm, 15.8);
-          }
-        } else {
-          setIsHubSelected(false);
-          setSelectedFarmId(null);
-          setSingleArcFarmId(null);
-          mapSceneRef.current?.flyToHub();
-        }
+        enterMapFromGlobe();
         return;
       }
 
@@ -1537,7 +1539,7 @@ export default function App() {
       soundEngine.playWhoosh(soundEnabled, 1.3);
       mapSceneRef.current?.flyToFarm(farm, 15.8);
     },
-    [centralHub, handleSelectHub, stage, soundEnabled]
+    [centralHub, enterMapFromGlobe, handleSelectHub, stage, soundEnabled]
   );
 
   // Cách vào bản đồ (b): Gõ tìm kiếm rồi nhấn Enter -> bay tới điểm khớp đầu tiên
