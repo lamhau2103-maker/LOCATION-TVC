@@ -162,31 +162,6 @@ a,
   }
 }
 
-@keyframes supply-arc-dash-flow {
-  0% {
-    stroke-dashoffset: 0;
-  }
-  100% {
-    stroke-dashoffset: -18;
-  }
-}
-
-.supply-arc-dash-path {
-  vector-effect: non-scaling-stroke;
-  will-change: stroke-dashoffset;
-  animation: supply-arc-dash-flow 1.2s linear infinite;
-}
-
-.supply-arc-dash-path.is-arc-hidden {
-  opacity: 0 !important;
-  visibility: hidden;
-  animation-play-state: paused !important;
-}
-
-.is-zooming .supply-arc-dash-path {
-  animation-play-state: paused !important;
-}
-
 @keyframes farm-ripple-pulse {
   0% {
     transform: scale(0.23);
