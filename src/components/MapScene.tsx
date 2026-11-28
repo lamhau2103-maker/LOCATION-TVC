@@ -53,6 +53,15 @@ import {
   refreshHubIconOnMap,
   registerMapLibreFarmIcons,
 } from '../utils/icons';
+import {
+  VIETNAM_ARCHIPELAGO_ISLANDS_GEOJSON,
+  VIETNAM_MARITIME_BOUNDARY_PATH,
+  VIETNAM_MARITIME_POLYGON_FEATURE,
+  VIETNAM_MARITIME_ZONE_GEOJSON,
+  VIETNAM_SOVEREIGNTY_LABELS,
+  VIETNAM_SOVEREIGNTY_LABELS_GEOJSON,
+  VietnamSovereigntyLabel,
+} from '../utils/vietnamMaritime';
 import { AtmosphericCloudsOverlay } from './CursorSpotlight';
 
 export interface MapSceneHandle {
@@ -1477,7 +1486,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
           globeRef.current.pointOfView(
             {
               lat: 14.5,
-              lng: 106.8,
+              lng: 109.2,
               altitude: getResponsiveGlobeAltitude(),
             },
             1500
@@ -1489,7 +1498,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
           globeRef.current.pointOfView(
             {
               lat: 14.5,
-              lng: 106.8,
+              lng: 109.2,
               altitude: getResponsiveGlobeAltitude(),
             },
             1400
@@ -1694,7 +1703,88 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         .arcDashLength(0.18)
         .arcDashGap(0.82)
         .arcDashInitialGap(() => Math.random())
-        .arcDashAnimateTime(1600);
+        .arcDashAnimateTime(1600)
+        // Vùng biển chủ quyền Việt Nam (từ Vịnh Bắc Bộ -> Hoàng Sa -> Trường Sa -> Tây Nam Bộ)
+        .polygonsData([VIETNAM_MARITIME_POLYGON_FEATURE])
+        .polygonGeoJsonGeometry((d: object) =>
+          (d as typeof VIETNAM_MARITIME_POLYGON_FEATURE).geometry as unknown as {
+            type: string;
+            coordinates: number[];
+          }
+        )
+        .polygonCapColor(() => 'rgba(14, 165, 233, 0.08)')
+        .polygonSideColor(() => 'rgba(0, 0, 0, 0)')
+        .polygonStrokeColor(() => 'rgba(56, 189, 248, 0.28)')
+        .polygonAltitude(0.002)
+        .polygonsTransitionDuration(0)
+        // Đường ranh giới vùng biển Việt Nam nét đứt đỏ sắc nét trên Quả địa cầu 3D
+        .pathsData([VIETNAM_MARITIME_BOUNDARY_PATH])
+        .pathPoints(
+          (d: object) => (d as typeof VIETNAM_MARITIME_BOUNDARY_PATH).coords
+        )
+        .pathPointLat((p: number[]) => p[1])
+        .pathPointLng((p: number[]) => p[0])
+        .pathPointAlt(0.004)
+        .pathColor(() => 'rgba(248, 113, 113, 0.92)')
+        .pathStroke(1.35)
+        .pathDashLength(0.018)
+        .pathDashGap(0.01)
+        .pathDashAnimateTime(0)
+        .pathTransitionDuration(0)
+        // Nhãn chủ quyền biển đảo Việt Nam luôn hiển thị rõ nét trên Biển Đông
+        .htmlElementsData(VIETNAM_SOVEREIGNTY_LABELS)
+        .htmlLat((d: object) => (d as VietnamSovereigntyLabel).lat)
+        .htmlLng((d: object) => (d as VietnamSovereigntyLabel).lng)
+        .htmlAltitude(0.01)
+        .htmlElement((d: object) => {
+          const item = d as VietnamSovereigntyLabel;
+          const el = document.createElement('div');
+          el.style.pointerEvents = 'none';
+          el.style.userSelect = 'none';
+          el.style.transform = 'translate(-50%, -50%)';
+          el.style.display = 'flex';
+          el.style.flexDirection = 'column';
+          el.style.alignItems = 'center';
+          el.style.whiteSpace = 'nowrap';
+          el.style.fontFamily =
+            "'Inter', 'Noto Sans', system-ui, -apple-system, sans-serif";
+
+          if (item.kind !== 'sea') {
+            const dot = document.createElement('span');
+            dot.style.width = item.kind === 'archipelago' ? '6px' : '4.5px';
+            dot.style.height = item.kind === 'archipelago' ? '6px' : '4.5px';
+            dot.style.borderRadius = '9999px';
+            dot.style.backgroundColor =
+              item.kind === 'archipelago' ? '#ef4444' : '#38bdf8';
+            dot.style.border = '1.5px solid #ffffff';
+            dot.style.boxShadow = '0 0 6px rgba(15, 23, 42, 0.85)';
+            dot.style.marginBottom = '2px';
+            el.appendChild(dot);
+          }
+
+          const text = document.createElement('span');
+          text.textContent = item.name;
+          if (item.kind === 'sea') {
+            text.style.fontSize = '11px';
+            text.style.fontWeight = '800';
+            text.style.fontStyle = 'italic';
+            text.style.letterSpacing = '0.14em';
+            text.style.textTransform = 'uppercase';
+            text.style.color = '#7dd3fc';
+          } else if (item.kind === 'archipelago') {
+            text.style.fontSize = '10px';
+            text.style.fontWeight = '800';
+            text.style.color = '#fecaca';
+          } else {
+            text.style.fontSize = '9.5px';
+            text.style.fontWeight = '700';
+            text.style.color = '#e0f2fe';
+          }
+          text.style.textShadow =
+            '0 1px 3px rgba(2, 12, 27, 0.96), 0 0 8px rgba(2, 12, 27, 0.92)';
+          el.appendChild(text);
+          return el;
+        });
 
       // Giới hạn pixelRatio hợp lý trên mobile (tối đa 2) & bật anisotropic tối đa cho ghim icon 3D sắc nét
       try {
@@ -1721,11 +1811,11 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         // ignore
       }
 
-      // Đặt góc nhìn khởi tạo hướng về Việt Nam / Đông Nam Á (tự cân tỷ lệ để không bị cắt trên điện thoại dọc)
+      // Đặt góc nhìn khởi tạo hướng về Việt Nam & toàn vùng Biển Đông (tự cân tỷ lệ để không bị cắt trên điện thoại dọc)
       globe.pointOfView(
         {
           lat: 14.5,
-          lng: 106.8,
+          lng: 109.2,
           altitude: getResponsiveGlobeAltitude(),
         },
         0
@@ -1738,8 +1828,8 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         controls.autoRotateSpeed = 0.45;
         controls.enableDamping = true;
         controls.dampingFactor = 0.08;
-        controls.minDistance = 118;
-        controls.maxDistance = 480;
+        controls.minDistance = 115;
+        controls.maxDistance = 500;
       }
 
       globeRef.current = globe;
@@ -1790,7 +1880,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
           globeRef.current.pointOfView(
             {
               lat: pov?.lat ?? 14.5,
-              lng: pov?.lng ?? 106.8,
+              lng: pov?.lng ?? 109.2,
               altitude: getResponsiveGlobeAltitude(),
             },
             300
@@ -2250,6 +2340,227 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
 
         // Đăng ký ĐỒNG BỘ 100% toàn bộ ảnh icon 3D (Canvas 2D 64x64)
         registerMapLibreFarmIcons(map);
+
+        // Vùng biển chủ quyền Việt Nam (Vịnh Bắc Bộ, Quần đảo Hoàng Sa, Quần đảo Trường Sa, vùng biển Tây Nam)
+        if (!map.getSource('vietnam-maritime-zone')) {
+          map.addSource('vietnam-maritime-zone', {
+            type: 'geojson',
+            data: VIETNAM_MARITIME_ZONE_GEOJSON,
+          });
+        }
+
+        if (!map.getLayer('vietnam-maritime-fill')) {
+          map.addLayer({
+            id: 'vietnam-maritime-fill',
+            type: 'fill',
+            source: 'vietnam-maritime-zone',
+            filter: ['==', ['geometry-type'], 'Polygon'],
+            paint: {
+              'fill-color': 'rgba(14, 165, 233, 0.04)',
+              'fill-antialias': true,
+            },
+          });
+        }
+
+        if (!map.getLayer('vietnam-maritime-casing')) {
+          map.addLayer({
+            id: 'vietnam-maritime-casing',
+            type: 'line',
+            source: 'vietnam-maritime-zone',
+            filter: ['==', ['geometry-type'], 'LineString'],
+            layout: {
+              'line-cap': 'round',
+              'line-join': 'round',
+            },
+            paint: {
+              'line-color': 'rgba(255, 255, 255, 0.65)',
+              'line-width': [
+                'interpolate',
+                ['linear'],
+                ['zoom'],
+                2,
+                2.2,
+                6,
+                3.2,
+                10,
+                3.8,
+              ],
+            },
+          });
+        }
+
+        if (!map.getLayer('vietnam-maritime-border')) {
+          map.addLayer({
+            id: 'vietnam-maritime-border',
+            type: 'line',
+            source: 'vietnam-maritime-zone',
+            filter: ['==', ['geometry-type'], 'LineString'],
+            layout: {
+              'line-cap': 'round',
+              'line-join': 'round',
+            },
+            paint: {
+              'line-color': '#DC2626',
+              'line-opacity': 0.82,
+              'line-width': [
+                'interpolate',
+                ['linear'],
+                ['zoom'],
+                2,
+                1.2,
+                6,
+                1.9,
+                10,
+                2.3,
+              ],
+              'line-dasharray': ['literal', [5, 3]],
+            },
+          });
+        }
+
+        if (!map.getSource('vietnam-archipelago-islands')) {
+          map.addSource('vietnam-archipelago-islands', {
+            type: 'geojson',
+            data: VIETNAM_ARCHIPELAGO_ISLANDS_GEOJSON,
+          });
+        }
+
+        if (!map.getLayer('vietnam-island-dots')) {
+          map.addLayer({
+            id: 'vietnam-island-dots',
+            type: 'circle',
+            source: 'vietnam-archipelago-islands',
+            paint: {
+              'circle-radius': [
+                'interpolate',
+                ['linear'],
+                ['zoom'],
+                2,
+                1.4,
+                6,
+                2.6,
+                10,
+                3.8,
+              ],
+              'circle-color': '#0284C7',
+              'circle-stroke-color': '#FFFFFF',
+              'circle-stroke-width': 1.1,
+              'circle-opacity': 0.82,
+            },
+          });
+        }
+
+        if (!map.getSource('vietnam-sovereignty-labels')) {
+          map.addSource('vietnam-sovereignty-labels', {
+            type: 'geojson',
+            data: VIETNAM_SOVEREIGNTY_LABELS_GEOJSON,
+          });
+        }
+
+        if (!map.getLayer('vietnam-archipelago-markers')) {
+          map.addLayer({
+            id: 'vietnam-archipelago-markers',
+            type: 'circle',
+            source: 'vietnam-sovereignty-labels',
+            filter: ['!=', ['get', 'kind'], 'sea'],
+            paint: {
+              'circle-radius': [
+                'interpolate',
+                ['linear'],
+                ['zoom'],
+                2,
+                2.8,
+                6,
+                4.2,
+                10,
+                5.0,
+              ],
+              'circle-color': [
+                'case',
+                ['==', ['get', 'kind'], 'archipelago'],
+                '#DC2626',
+                '#0284C7',
+              ],
+              'circle-stroke-color': '#FFFFFF',
+              'circle-stroke-width': 1.5,
+              'circle-opacity': 0.9,
+            },
+          });
+        }
+
+        if (!map.getLayer('vietnam-sovereignty-text')) {
+          map.addLayer({
+            id: 'vietnam-sovereignty-text',
+            type: 'symbol',
+            source: 'vietnam-sovereignty-labels',
+            minzoom: 0,
+            layout: {
+              'text-field': ['get', 'name'],
+              'text-font': ['Noto Sans Regular'],
+              'text-size': [
+                'interpolate',
+                ['linear'],
+                ['zoom'],
+                2,
+                [
+                  'case',
+                  ['==', ['get', 'kind'], 'sea'],
+                  11.5,
+                  ['==', ['get', 'kind'], 'archipelago'],
+                  10.5,
+                  9.5,
+                ],
+                6,
+                [
+                  'case',
+                  ['==', ['get', 'kind'], 'sea'],
+                  15,
+                  ['==', ['get', 'kind'], 'archipelago'],
+                  12.5,
+                  11,
+                ],
+                10,
+                [
+                  'case',
+                  ['==', ['get', 'kind'], 'sea'],
+                  17,
+                  ['==', ['get', 'kind'], 'archipelago'],
+                  14,
+                  12.5,
+                ],
+              ],
+              'text-anchor': [
+                'case',
+                ['==', ['get', 'kind'], 'sea'],
+                'center',
+                'top',
+              ],
+              'text-offset': [
+                'case',
+                ['==', ['get', 'kind'], 'sea'],
+                ['literal', [0, 0]],
+                ['literal', [0, 0.55]],
+              ],
+              'text-max-width': 16,
+              'text-allow-overlap': true,
+              'text-ignore-placement': true,
+              'text-optional': false,
+            },
+            paint: {
+              'text-color': [
+                'case',
+                ['==', ['get', 'kind'], 'archipelago'],
+                '#991B1B',
+                ['==', ['get', 'kind'], 'sea'],
+                '#0369A1',
+                '#0F172A',
+              ],
+              'text-halo-color': 'rgba(255, 255, 255, 0.96)',
+              'text-halo-width': 3.2,
+              'text-halo-blur': 0.35,
+            },
+          });
+        }
 
         // Vòng bán kính an toàn sinh học
         const bioGeoJSON = buildBiosecurityGeoJSON(
