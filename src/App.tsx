@@ -18,6 +18,8 @@ import {
   AppStage,
   ArcColorConfig,
   CentralHub,
+  DisinfectionRouteConfig,
+  DisinfectionRoutesMap,
   DrivingDistanceCache,
   Farm,
   FarmCategory,
@@ -450,6 +452,37 @@ export default function App() {
   const [previewArcColors, setPreviewArcColors] =
     useState<ArcColorConfig | null>(null);
   const effectiveArcColors = previewArcColors || arcColors;
+
+  // 4b-4. Cấu hình phân luồng Điểm rửa xe (danh sách trại phụ trách + màu tia) đồng bộ từ Upstash Redis
+  const [disinfectionRoutes, setDisinfectionRoutes] =
+    useState<DisinfectionRoutesMap>(() => {
+      try {
+        const saved = localStorage.getItem(
+          APP_CONFIG.disinfectionRoutesStorageKey
+        );
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (parsed && typeof parsed === 'object') {
+            return parsed as DisinfectionRoutesMap;
+          }
+        }
+      } catch {
+        // ignore
+      }
+      return {};
+    });
+  const [previewDisinfectionRoute, setPreviewDisinfectionRoute] = useState<{
+    farmKey: string;
+    config: DisinfectionRouteConfig;
+  } | null>(null);
+
+  const effectiveDisinfectionRoutes = useMemo<DisinfectionRoutesMap>(() => {
+    if (!previewDisinfectionRoute) return disinfectionRoutes;
+    return {
+      ...disinfectionRoutes,
+      [previewDisinfectionRoute.farmKey]: previewDisinfectionRoute.config,
+    };
+  }, [disinfectionRoutes, previewDisinfectionRoute]);
 
   const [isServerIconConnected, setIsServerIconConnected] =
     useState<boolean>(true);
@@ -890,6 +923,7 @@ export default function App() {
             icons?: Record<string, string>;
             customLabels?: Record<string, string>;
             arcColors?: ArcColorConfig;
+            disinfectionRoutes?: DisinfectionRoutesMap;
             items?: Array<{ farm_key?: string; icon?: string }>;
           }
         | Array<{ farm_key?: string; icon?: string }>;
@@ -966,6 +1000,41 @@ export default function App() {
                 JSON.stringify(fetchedArcs)
               );
             } catch {}
+          }
+        }
+
+        if (
+          data.disinfectionRoutes &&
+          typeof data.disinfectionRoutes === 'object'
+        ) {
+          const cleanedDisinfection: DisinfectionRoutesMap = {};
+          for (const [washKey, cfg] of Object.entries(
+            data.disinfectionRoutes
+          )) {
+            if (cfg && typeof cfg === 'object') {
+              cleanedDisinfection[washKey] = {
+                targetFarmKeys: Array.isArray(cfg.targetFarmKeys)
+                  ? cfg.targetFarmKeys.filter((k) => typeof k === 'string')
+                  : [],
+                fromColor:
+                  typeof cfg.fromColor === 'string' && cfg.fromColor.trim()
+                    ? cfg.fromColor.trim()
+                    : '#0EA5E9',
+                toColor:
+                  typeof cfg.toColor === 'string' && cfg.toColor.trim()
+                    ? cfg.toColor.trim()
+                    : '#38BDF8',
+              };
+            }
+          }
+          setDisinfectionRoutes(cleanedDisinfection);
+          try {
+            localStorage.setItem(
+              APP_CONFIG.disinfectionRoutesStorageKey,
+              JSON.stringify(cleanedDisinfection)
+            );
+          } catch {
+            // ignore
           }
         }
         return true;
@@ -1342,6 +1411,88 @@ export default function App() {
       }
     },
     [adminPassword, iconOverrides, showToast, soundEnabled]
+  );
+
+  const handleSaveDisinfectionRoute = useCallback(
+    async (farm: Farm, config: DisinfectionRouteConfig) => {
+      const farmKey = farm.farmKey || getFarmKey(farm.lat, farm.lng);
+      const cleanConfig: DisinfectionRouteConfig = {
+        targetFarmKeys: Array.from(new Set(config.targetFarmKeys)).filter(
+          Boolean
+        ),
+        fromColor: config.fromColor,
+        toColor: config.toColor,
+      };
+
+      const res = await fetch('/api/icons', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-admin-password': adminPassword,
+          Accept: 'application/json',
+        },
+        body: JSON.stringify({
+          disinfectionRoute: {
+            farm_key: farmKey,
+            ...cleanConfig,
+          },
+        }),
+      });
+
+      const contentType = res.headers.get('content-type') || '';
+      const isJson = contentType.includes('application/json');
+      const data = isJson ? await res.json() : {};
+
+      if (res.status === 401) {
+        throw new Error(data.error || 'Sai mật khẩu quản trị.');
+      }
+
+      if (res.ok && isJson) {
+        const nextMap: DisinfectionRoutesMap = {
+          ...disinfectionRoutes,
+          [farmKey]: cleanConfig,
+        };
+        setDisinfectionRoutes(nextMap);
+        setPreviewDisinfectionRoute(null);
+        setIsServerIconConnected(true);
+        try {
+          localStorage.setItem(
+            APP_CONFIG.disinfectionRoutesStorageKey,
+            JSON.stringify(nextMap)
+          );
+        } catch {
+          // ignore
+        }
+        soundEngine.playScanSuccess(soundEnabled);
+        setToastMessage('Đã lưu cấu hình luồng Điểm rửa xe lên Upstash!');
+        return;
+      }
+
+      if (res.status === 503 || !isJson) {
+        const nextMap: DisinfectionRoutesMap = {
+          ...disinfectionRoutes,
+          [farmKey]: cleanConfig,
+        };
+        setDisinfectionRoutes(nextMap);
+        setPreviewDisinfectionRoute(null);
+        setIsServerIconConnected(false);
+        try {
+          localStorage.setItem(
+            APP_CONFIG.disinfectionRoutesStorageKey,
+            JSON.stringify(nextMap)
+          );
+        } catch {
+          // ignore
+        }
+        setToastMessage('Chưa kết nối máy chủ: cấu hình chỉ lưu trên máy này');
+        return;
+      }
+
+      throw new Error(
+        data.error || 'Không thể lưu cấu hình luồng Điểm rửa xe lên Upstash.'
+      );
+    },
+    [adminPassword, disinfectionRoutes, soundEnabled]
   );
 
   /**
@@ -1797,6 +1948,7 @@ export default function App() {
         logoUrl={logoUrl}
         farms={farms}
         arcColors={effectiveArcColors}
+        disinfectionRoutes={effectiveDisinfectionRoutes}
         newlyAddedIds={newlyAddedIds}
         removingFarms={removingFarms}
         bouncingFarmId={bouncingFarmId}
@@ -1920,6 +2072,10 @@ export default function App() {
             onChangeMobileSheetSnap={setMobileSheetSnap}
             drivingDistanceCache={drivingDistanceCache}
             isCalculatingDistances={isCalculatingDistances}
+            allFarms={farms}
+            disinfectionRoutes={disinfectionRoutes}
+            onSaveDisinfectionRoute={handleSaveDisinfectionRoute}
+            onPreviewDisinfectionRoute={setPreviewDisinfectionRoute}
           />
         )}
       </AnimatePresence>

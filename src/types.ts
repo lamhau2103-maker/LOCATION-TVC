@@ -110,3 +110,12 @@ export interface CachedDrivingEntry extends DrivingRouteResult {
 }
 
 export type DrivingDistanceCache = Record<string, CachedDrivingEntry>;
+
+export interface DisinfectionRouteConfig {
+  targetFarmKeys: string[];
+  fromColor: string;
+  toColor: string;
+}
+
+export type DisinfectionRoutesMap = Record<string, DisinfectionRouteConfig>;
+

@@ -15,6 +15,7 @@ import { Map as MapIcon, Minus, Mountain, Plus, Satellite } from 'lucide-react';
 import { motion } from 'framer-motion';
 import {
   APP_CONFIG,
+  DEFAULT_DISINFECTION_ROUTE_COLORS,
   FACTORY_FLY_DURATION_MS,
   FACTORY_FOCUS_ZOOM,
   getCategoryConfig,
@@ -28,6 +29,7 @@ import {
   AppStage,
   ArcColorConfig,
   CentralHub,
+  DisinfectionRoutesMap,
   Farm,
   FarmCategory,
   FarmCustomLabels,
@@ -44,6 +46,7 @@ import {
 import {
   addSingleFarmIconToMap,
   createFarmPinCanvasSync,
+  getFarmKey,
   getLocationDisplayLabel,
   preloadHubLogo,
   refreshHubIconOnMap,
@@ -89,6 +92,7 @@ interface MapSceneProps {
   liteMode: boolean;
   onSatelliteFallbackToStreet?: () => void;
   arcColors: ArcColorConfig;
+  disinfectionRoutes?: DisinfectionRoutesMap;
 }
 
 const OPENFREEMAP_GLYPHS_URL =
@@ -774,6 +778,7 @@ interface ResolvedRouteColorsState {
 }
 
 interface ArcGeometryItem {
+  arcId: string;
   farm: Farm;
   hubLng: number;
   hubLat: number;
@@ -784,6 +789,31 @@ interface ArcGeometryItem {
   transitMs: number;
   cycleMs: number;
   startDelayMs: number;
+}
+
+interface DisinfectionArcGeometryItem {
+  arcId: string;
+  washKey: string;
+  targetKey: string;
+  washFarm: Farm;
+  targetFarm: Farm;
+  washLng: number;
+  washLat: number;
+  farmLng: number;
+  farmLat: number;
+  ctrlPt: [number, number];
+  fullCoords: Array<[number, number]>;
+  transitMs: number;
+  cycleMs: number;
+  startDelayMs: number;
+}
+
+interface ArcHitResult {
+  arcId: string;
+  kind: 'factory' | 'wash';
+  farmId: string;
+  washName?: string;
+  targetName?: string;
 }
 
 const FarmRipplesOverlay = React.memo(function FarmRipplesOverlay({
@@ -910,6 +940,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
       liteMode,
       onSatelliteFallbackToStreet,
       arcColors,
+      disinfectionRoutes = {},
     },
     ref
   ) => {
@@ -987,9 +1018,17 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
       drawParticlesFrameRef.current();
     }, [arcColors]);
 
+    const disinfectionRoutesRef = useRef<DisinfectionRoutesMap>(disinfectionRoutes);
+
+    useEffect(() => {
+      disinfectionRoutesRef.current = disinfectionRoutes;
+      drawParticlesFrameRef.current();
+    }, [disinfectionRoutes]);
+
     const rippleLayerRef = useRef<HTMLDivElement | null>(null);
     const farmRippleRefs = useRef<Map<string, HTMLDivElement>>(new Map());
     const arcGeometriesRef = useRef<ArcGeometryItem[]>([]);
+    const disinfectionArcGeometriesRef = useRef<DisinfectionArcGeometryItem[]>([]);
     const ripplePointsRef = useRef<RipplePointItem[]>([]);
     const showFactoryArcsRef = useRef<boolean>(true);
     const isZoomingRef = useRef<boolean>(false);
@@ -1184,37 +1223,92 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
       matchedFarmIds,
     ]);
 
-    // Dữ liệu đường cung đốm sáng một chiều từ Nhà Máy Cám thật ➔ Trại Gà & Trại Heo trên Quả địa cầu 3D
+    // Dữ liệu đường cung đốm sáng một chiều từ Nhà Máy Cám thật & Điểm rửa xe trên Quả địa cầu 3D
     const globeArcsData = useMemo<GlobeArcDatum[]>(() => {
-      if (!centralHub || !showFactoryArcs || activeTargetFarms.length === 0) return [];
-      let hubCoords: [number, number] = [
-        Number(centralHub.lng),
-        Number(centralHub.lat),
-      ];
-      if (Math.abs(hubCoords[0]) < 30 && Math.abs(hubCoords[1]) >= 30) {
-        hubCoords = [hubCoords[1], hubCoords[0]];
-      }
-      const [hubLng, hubLat] = hubCoords;
+      const result: GlobeArcDatum[] = [];
 
-      return activeTargetFarms.map((farm) => {
-        let coords: [number, number] = [Number(farm.lng), Number(farm.lat)];
-        if (Math.abs(coords[0]) < 30 && Math.abs(coords[1]) >= 30) {
-          coords = [coords[1], coords[0]];
+      if (centralHub && showFactoryArcs && activeTargetFarms.length > 0) {
+        let hubCoords: [number, number] = [
+          Number(centralHub.lng),
+          Number(centralHub.lat),
+        ];
+        if (Math.abs(hubCoords[0]) < 30 && Math.abs(hubCoords[1]) >= 30) {
+          hubCoords = [hubCoords[1], hubCoords[0]];
         }
-        const [farmLng, farmLat] = coords;
-        const isPig = farm.category === 'pig';
-        const colors = isPig ? arcColors.pig : arcColors.chicken;
+        const [hubLng, hubLat] = hubCoords;
 
-        return {
-          id: `globe-arc-${farm.id}`,
-          startLat: hubLat,
-          startLng: hubLng,
-          endLat: farmLat,
-          endLng: farmLng,
-          color: [colors.from, colors.to],
-        };
-      });
-    }, [activeTargetFarms, centralHub, showFactoryArcs, arcColors]);
+        activeTargetFarms.forEach((farm) => {
+          let coords: [number, number] = [Number(farm.lng), Number(farm.lat)];
+          if (Math.abs(coords[0]) < 30 && Math.abs(coords[1]) >= 30) {
+            coords = [coords[1], coords[0]];
+          }
+          const [farmLng, farmLat] = coords;
+          const isPig = farm.category === 'pig';
+          const colors = isPig ? arcColors.pig : arcColors.chicken;
+
+          result.push({
+            id: `globe-arc-${farm.id}`,
+            startLat: hubLat,
+            startLng: hubLng,
+            endLat: farmLat,
+            endLng: farmLng,
+            color: [colors.from, colors.to],
+          });
+        });
+      }
+
+      const farmByKey = new Map<string, Farm>();
+      for (const f of visibleFarms) {
+        farmByKey.set(f.farmKey || getFarmKey(f.lat, f.lng), f);
+      }
+
+      for (const washFarm of visibleFarms) {
+        if (washFarm.subType !== 'wash') continue;
+        const washKey = washFarm.farmKey || getFarmKey(washFarm.lat, washFarm.lng);
+        const cfg = disinfectionRoutes[washKey];
+        if (!cfg || !Array.isArray(cfg.targetFarmKeys) || cfg.targetFarmKeys.length === 0) {
+          continue;
+        }
+        const fromColor = cfg.fromColor || DEFAULT_DISINFECTION_ROUTE_COLORS.from;
+        const toColor = cfg.toColor || DEFAULT_DISINFECTION_ROUTE_COLORS.to;
+
+        for (const targetKey of cfg.targetFarmKeys) {
+          const targetFarm = farmByKey.get(targetKey);
+          if (!targetFarm) continue;
+          if (
+            selectedFarm &&
+            !isHubSelected &&
+            selectedFarm.subType !== 'hub' &&
+            !selectedFarm.isFeedMill
+          ) {
+            if (selectedFarm.subType === 'wash') {
+              if (selectedFarm.id !== washFarm.id) continue;
+            } else if (selectedFarm.id !== targetFarm.id) {
+              continue;
+            }
+          }
+          result.push({
+            id: `globe-wash-arc-${washKey}-${targetKey}`,
+            startLat: Number(washFarm.lat),
+            startLng: Number(washFarm.lng),
+            endLat: Number(targetFarm.lat),
+            endLng: Number(targetFarm.lng),
+            color: [fromColor, toColor],
+          });
+        }
+      }
+
+      return result;
+    }, [
+      activeTargetFarms,
+      centralHub,
+      showFactoryArcs,
+      arcColors,
+      visibleFarms,
+      disinfectionRoutes,
+      selectedFarm,
+      isHubSelected,
+    ]);
 
     const executeFlyToGlobeEntry = useCallback(() => {
       const map = mapRef.current;
@@ -2662,8 +2756,11 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         return bestFeat;
       };
 
-      const queryArcFarmIdAtPoint = (point: maplibregl.Point): string => {
-        if (!showFactoryArcsRef.current) return '';
+      const queryArcAtPoint = (point: maplibregl.Point): ArcHitResult | null => {
+        const hasFactory = showFactoryArcsRef.current && arcGeometriesRef.current.length > 0;
+        const hasDisinfection = disinfectionArcGeometriesRef.current.length > 0;
+        if (!hasFactory && !hasDisinfection) return null;
+
         if (map.getLayer('supply-bezier-hit')) {
           const arcBox: [maplibregl.PointLike, maplibregl.PointLike] = [
             [point.x - 10, point.y - 10],
@@ -2672,50 +2769,95 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
           const feats = map.queryRenderedFeatures(arcBox, {
             layers: ['supply-bezier-hit'],
           });
-          const hitId = String(feats[0]?.properties?.farmId || '');
-          if (hitId) return hitId;
+          const hitProps = feats[0]?.properties;
+          if (hitProps?.arcId && hitProps?.farmId) {
+            return {
+              arcId: String(hitProps.arcId),
+              kind: hitProps.kind === 'wash' ? 'wash' : 'factory',
+              farmId: String(hitProps.farmId),
+              washName: hitProps.washName ? String(hitProps.washName) : undefined,
+              targetName: hitProps.targetName
+                ? String(hitProps.targetName)
+                : undefined,
+            };
+          }
         }
 
         // Bổ sung nhận diện chạm/rê chuột trực tiếp lên chấm tròn đang chuyển động
-        const arcs = arcGeometriesRef.current;
-        if (arcs.length === 0) return '';
         const nowMs = particlesTimeRef.current;
-        let closestFarmId = '';
+        let closestHit: ArcHitResult | null = null;
         let closestDistSq = 14 * 14;
 
-        for (const arc of arcs) {
-          const phaseMs =
-            (((nowMs + arc.startDelayMs) % arc.cycleMs) + arc.cycleMs) %
-            arc.cycleMs;
-          if (phaseMs > arc.transitMs) continue;
+        if (hasFactory) {
+          for (const arc of arcGeometriesRef.current) {
+            const phaseMs =
+              (((nowMs + arc.startDelayMs) % arc.cycleMs) + arc.cycleMs) %
+              arc.cycleMs;
+            if (phaseMs > arc.transitMs) continue;
 
-          const t = phaseMs / arc.transitMs;
-          const inv = 1 - t;
-          const p0 = map.project([arc.hubLng, arc.hubLat]);
-          const p1 = map.project(arc.ctrlPt);
-          const p2 = map.project([arc.farmLng, arc.farmLat]);
-          const px = inv * inv * p0.x + 2 * inv * t * p1.x + t * t * p2.x;
-          const py = inv * inv * p0.y + 2 * inv * t * p1.y + t * t * p2.y;
-          const dx = px - point.x;
-          const dy = py - point.y;
-          const dSq = dx * dx + dy * dy;
-          if (dSq < closestDistSq) {
-            closestDistSq = dSq;
-            closestFarmId = arc.farm.id;
+            const t = phaseMs / arc.transitMs;
+            const inv = 1 - t;
+            const p0 = map.project([arc.hubLng, arc.hubLat]);
+            const p1 = map.project(arc.ctrlPt);
+            const p2 = map.project([arc.farmLng, arc.farmLat]);
+            const px = inv * inv * p0.x + 2 * inv * t * p1.x + t * t * p2.x;
+            const py = inv * inv * p0.y + 2 * inv * t * p1.y + t * t * p2.y;
+            const dx = px - point.x;
+            const dy = py - point.y;
+            const dSq = dx * dx + dy * dy;
+            if (dSq < closestDistSq) {
+              closestDistSq = dSq;
+              closestHit = {
+                arcId: arc.arcId,
+                kind: 'factory',
+                farmId: arc.farm.id,
+              };
+            }
           }
         }
-        return closestFarmId;
+
+        if (hasDisinfection) {
+          for (const dArc of disinfectionArcGeometriesRef.current) {
+            const phaseMs =
+              (((nowMs + dArc.startDelayMs) % dArc.cycleMs) + dArc.cycleMs) %
+              dArc.cycleMs;
+            if (phaseMs > dArc.transitMs) continue;
+
+            const t = phaseMs / dArc.transitMs;
+            const inv = 1 - t;
+            const p0 = map.project([dArc.washLng, dArc.washLat]);
+            const p1 = map.project(dArc.ctrlPt);
+            const p2 = map.project([dArc.farmLng, dArc.farmLat]);
+            const px = inv * inv * p0.x + 2 * inv * t * p1.x + t * t * p2.x;
+            const py = inv * inv * p0.y + 2 * inv * t * p1.y + t * t * p2.y;
+            const dx = px - point.x;
+            const dy = py - point.y;
+            const dSq = dx * dx + dy * dy;
+            if (dSq < closestDistSq) {
+              closestDistSq = dSq;
+              closestHit = {
+                arcId: dArc.arcId,
+                kind: 'wash',
+                farmId: dArc.targetFarm.id,
+                washName: dArc.washFarm.name,
+                targetName: dArc.targetFarm.name,
+              };
+            }
+          }
+        }
+
+        return closestHit;
       };
 
       map.on('click', (e) => {
         const feat = queryInteractiveFeatureAtPoint(e.point);
         if (!feat) {
           // Hỗ trợ chạm/click trực tiếp vào quỹ đạo cung hoặc đốm sáng để nổi bật & xem thông tin trại đích
-          const arcFarmId = queryArcFarmIdAtPoint(e.point);
-          if (arcFarmId) {
-            setHoveredArcId(arcFarmId);
+          const arcHit = queryArcAtPoint(e.point);
+          if (arcHit) {
+            setHoveredArcId(arcHit.arcId);
             const matchedArcFarm = latestStateRef.current.farms.find(
-              (f) => f.id === arcFarmId
+              (f) => f.id === arcHit.farmId
             );
             if (matchedArcFarm) {
               latestStateRef.current.onSelectFarm(matchedArcFarm);
@@ -2750,23 +2892,34 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
 
         const feat = queryInteractiveFeatureAtPoint(e.point);
         if (!feat) {
-          const arcFarmId = queryArcFarmIdAtPoint(e.point);
-          if (arcFarmId) {
+          const arcHit = queryArcAtPoint(e.point);
+          if (arcHit) {
             map.getCanvas().style.cursor = 'pointer';
-            setHoveredArcId((prev) => (prev === arcFarmId ? prev : arcFarmId));
-            const matchedArcFarm = latestStateRef.current.farms.find(
-              (f) => f.id === arcFarmId
+            setHoveredArcId((prev) =>
+              prev === arcHit.arcId ? prev : arcHit.arcId
             );
-            if (matchedArcFarm) {
+            if (arcHit.kind === 'wash') {
               setHoveredTooltip({
-                name: `Tuyến tới ${matchedArcFarm.name}`,
-                badge: getLocationDisplayLabel(
-                  matchedArcFarm,
-                  latestStateRef.current.customLabels
-                ),
+                name: `Luồng sát trùng: ${arcHit.washName || 'Điểm rửa xe'} → ${arcHit.targetName || ''}`,
+                badge: 'Điểm rửa xe',
                 x: e.point.x,
                 y: e.point.y,
               });
+            } else {
+              const matchedArcFarm = latestStateRef.current.farms.find(
+                (f) => f.id === arcHit.farmId
+              );
+              if (matchedArcFarm) {
+                setHoveredTooltip({
+                  name: `Tuyến tới ${matchedArcFarm.name}`,
+                  badge: getLocationDisplayLabel(
+                    matchedArcFarm,
+                    latestStateRef.current.customLabels
+                  ),
+                  x: e.point.x,
+                  y: e.point.y,
+                });
+              }
             }
             setHoveredId((prev) => (prev !== null ? null : prev));
             return;
@@ -2951,26 +3104,55 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         setupCustomLayers(map);
         if (
           latestStateRef.current.stage === 'map' &&
-          showFactoryArcsRef.current &&
-          arcGeometriesRef.current.length > 0
+          ((showFactoryArcsRef.current && arcGeometriesRef.current.length > 0) ||
+            disinfectionArcGeometriesRef.current.length > 0)
         ) {
+          const hitFeatures: Array<{
+            type: 'Feature';
+            properties: Record<string, string>;
+            geometry: { type: 'LineString'; coordinates: Array<[number, number]> };
+          }> = [];
+          if (showFactoryArcsRef.current) {
+            arcGeometriesRef.current.forEach((arc) => {
+              hitFeatures.push({
+                type: 'Feature',
+                properties: {
+                  id: `bezier-${arc.farm.id}`,
+                  arcId: arc.arcId,
+                  kind: 'factory',
+                  farmId: arc.farm.id,
+                },
+                geometry: {
+                  type: 'LineString',
+                  coordinates: arc.fullCoords,
+                },
+              });
+            });
+          }
+          disinfectionArcGeometriesRef.current.forEach((dArc) => {
+            hitFeatures.push({
+              type: 'Feature',
+              properties: {
+                id: `bezier-wash-${dArc.washKey}-${dArc.targetKey}`,
+                arcId: dArc.arcId,
+                kind: 'wash',
+                farmId: dArc.targetFarm.id,
+                washName: dArc.washFarm.name,
+                targetName: dArc.targetFarm.name,
+              },
+              geometry: {
+                type: 'LineString',
+                coordinates: dArc.fullCoords,
+              },
+            });
+          });
           (
             map.getSource('supply-bezier-arcs') as
               | maplibregl.GeoJSONSource
               | undefined
           )?.setData({
             type: 'FeatureCollection',
-            features: arcGeometriesRef.current.map((arc) => ({
-              type: 'Feature',
-              properties: {
-                id: `bezier-${arc.farm.id}`,
-                farmId: arc.farm.id,
-              },
-              geometry: {
-                type: 'LineString',
-                coordinates: arc.fullCoords,
-              },
-            })),
+            features: hitFeatures,
           });
         }
         requestAnimationFrame(() => {
@@ -3201,7 +3383,10 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
     showFactoryArcsRef.current = showFactoryArcs;
 
     const highlightedArcFarmId =
-      hoveredArcId || (selectedFarm && !isHubSelected ? selectedFarm.id : null);
+      hoveredArcId ||
+      (selectedFarm && !isHubSelected && selectedFarm.subType !== 'wash'
+        ? selectedFarm.id
+        : null);
     highlightedArcFarmIdRef.current = highlightedArcFarmId;
 
     const cachedArcGeometries = useMemo<ArcGeometryItem[]>(() => {
@@ -3270,6 +3455,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         );
 
         return {
+          arcId: `factory:${farm.id}`,
           farm,
           hubLng,
           hubLat,
@@ -3285,6 +3471,139 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
     }, [activeTargetFarms, centralHub]);
 
     arcGeometriesRef.current = cachedArcGeometries;
+
+    const cachedDisinfectionArcs = useMemo<DisinfectionArcGeometryItem[]>(() => {
+      if (visibleFarms.length === 0) return [];
+
+      const visibleByKey = new Map<string, Farm>();
+      for (const f of visibleFarms) {
+        visibleByKey.set(f.farmKey || getFarmKey(f.lat, f.lng), f);
+      }
+
+      const items: DisinfectionArcGeometryItem[] = [];
+      let routeIdx = 0;
+
+      for (const washFarm of visibleFarms) {
+        if (washFarm.subType !== 'wash') continue;
+        const washKey =
+          washFarm.farmKey || getFarmKey(washFarm.lat, washFarm.lng);
+        const cfg = disinfectionRoutes[washKey];
+        if (!cfg || !Array.isArray(cfg.targetFarmKeys) || cfg.targetFarmKeys.length === 0) {
+          continue;
+        }
+
+        let washCoords: [number, number] = [
+          Number(washFarm.lng),
+          Number(washFarm.lat),
+        ];
+        if (Math.abs(washCoords[0]) < 30 && Math.abs(washCoords[1]) >= 30) {
+          washCoords = [washCoords[1], washCoords[0]];
+        }
+        const [washLng, washLat] = washCoords;
+
+        for (const targetKey of cfg.targetFarmKeys) {
+          const targetFarm = visibleByKey.get(targetKey);
+          if (!targetFarm || targetFarm.id === washFarm.id) continue;
+
+          if (singleArcFarmId && targetFarm.id !== singleArcFarmId) {
+            continue;
+          }
+
+          if (
+            !singleArcFarmId &&
+            selectedFarm &&
+            !isHubSelected &&
+            !selectedFarm.isFeedMill &&
+            selectedFarm.subType !== 'hub'
+          ) {
+            if (selectedFarm.subType === 'wash') {
+              if (selectedFarm.id !== washFarm.id) continue;
+            } else if (selectedFarm.id !== targetFarm.id) {
+              continue;
+            }
+          }
+
+          let farmCoords: [number, number] = [
+            Number(targetFarm.lng),
+            Number(targetFarm.lat),
+          ];
+          if (Math.abs(farmCoords[0]) < 30 && Math.abs(farmCoords[1]) >= 30) {
+            farmCoords = [farmCoords[1], farmCoords[0]];
+          }
+          const [farmLng, farmLat] = farmCoords;
+
+          const dx = farmLng - washLng;
+          const dy = farmLat - washLat;
+          const bendSign = routeIdx % 2 === 0 ? -1 : 1;
+          const bendFactor = 0.22 * bendSign;
+          const ctrlPt: [number, number] = [
+            washLng + dx * 0.5 - dy * bendFactor,
+            washLat + dy * 0.5 + dx * bendFactor,
+          ];
+
+          const steps = 18;
+          const fullCoords: Array<[number, number]> = [];
+          for (let s = 0; s <= steps; s++) {
+            const t = s / steps;
+            const inv = 1 - t;
+            fullCoords.push([
+              inv * inv * washLng + 2 * inv * t * ctrlPt[0] + t * t * farmLng,
+              inv * inv * washLat + 2 * inv * t * ctrlPt[1] + t * t * farmLat,
+            ]);
+          }
+
+          let arcLengthKm = 0;
+          for (let s = 1; s < fullCoords.length; s++) {
+            arcLengthKm += calculateDistanceKm(
+              fullCoords[s - 1][1],
+              fullCoords[s - 1][0],
+              fullCoords[s][1],
+              fullCoords[s][0]
+            );
+          }
+
+          const transitMs = Math.max(
+            900,
+            Math.round((arcLengthKm / CONTROL_TOWER_SPEED_KM_PER_SEC) * 1000)
+          );
+          const cycleMs = Math.max(
+            3200,
+            transitMs + ARRIVAL_RIPPLE_DURATION_MS + 350
+          );
+          const startDelayMs = Math.round(
+            (((routeIdx + 3) * 0.38196601125) % 1) * cycleMs
+          );
+
+          items.push({
+            arcId: `wash:${washKey}->${targetKey}`,
+            washKey,
+            targetKey,
+            washFarm,
+            targetFarm,
+            washLng,
+            washLat,
+            farmLng,
+            farmLat,
+            ctrlPt,
+            fullCoords,
+            transitMs,
+            cycleMs,
+            startDelayMs,
+          });
+          routeIdx++;
+        }
+      }
+
+      return items;
+    }, [
+      visibleFarms,
+      disinfectionRoutes,
+      selectedFarm,
+      isHubSelected,
+      singleArcFarmId,
+    ]);
+
+    disinfectionArcGeometriesRef.current = cachedDisinfectionArcs;
 
     const ripplePoints = useMemo<RipplePointItem[]>(() => {
       const items: RipplePointItem[] = [];
@@ -3391,34 +3710,60 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-      const arcs = arcGeometriesRef.current;
+      const factoryArcs = showFactoryArcsRef.current ? arcGeometriesRef.current : [];
+      const disinfectionArcs = disinfectionArcGeometriesRef.current;
+
       if (
         !map ||
         latestStateRef.current.stage !== 'map' ||
-        !showFactoryArcsRef.current ||
-        arcs.length === 0
+        (factoryArcs.length === 0 && disinfectionArcs.length === 0)
       ) {
         return;
       }
 
-      const highlightedId = highlightedArcFarmIdRef.current;
-      const hasMultiHighlight =
-        arcs.length > 1 &&
-        highlightedId !== null &&
-        arcs.some((g) => g.farm.id === highlightedId);
+      const activeColors = colorsRef.current;
+      const activeDisinfectionConfigs = disinfectionRoutesRef.current;
 
-      const projectedArcs: Array<{
-        arc: ArcGeometryItem;
+      const getFactoryColorPair = (farm: Farm): ResolvedRouteColorPair =>
+        farm.category === 'pig'
+          ? activeColors.pig
+          : farm.category === 'chicken'
+          ? activeColors.chicken
+          : activeColors.other;
+
+      const getDisinfectionColorPair = (
+        dArc: DisinfectionArcGeometryItem
+      ): ResolvedRouteColorPair => {
+        const liveCfg = activeDisinfectionConfigs[dArc.washKey];
+        const fromHex =
+          liveCfg?.fromColor || DEFAULT_DISINFECTION_ROUTE_COLORS.from;
+        const toHex = liveCfg?.toColor || DEFAULT_DISINFECTION_ROUTE_COLORS.to;
+        return {
+          from: fromHex,
+          to: toHex,
+          fromRgb: parseHexToRgb(fromHex),
+          toRgb: parseHexToRgb(toHex),
+        };
+      };
+
+      interface RenderArcEntry {
+        kind: 'factory' | 'wash';
+        arcId: string;
+        targetFarmId: string;
         p0: maplibregl.Point;
         p1: maplibregl.Point;
         p2: maplibregl.Point;
-        isHighlighted: boolean;
-        isDimmed: boolean;
-      }> = [];
+        transitMs: number;
+        cycleMs: number;
+        startDelayMs: number;
+        fromRgb: [number, number, number];
+        toRgb: [number, number, number];
+        baseLineOpacity: number;
+      }
 
-      let highlightedItem: (typeof projectedArcs)[number] | null = null;
+      const rawEntries: RenderArcEntry[] = [];
 
-      for (const arc of arcs) {
+      for (const arc of factoryArcs) {
         const p0 = map.project([arc.hubLng, arc.hubLat]);
         const p1 = map.project(arc.ctrlPt);
         const p2 = map.project([arc.farmLng, arc.farmLat]);
@@ -3436,37 +3781,114 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
           continue;
         }
 
-        const isHighlighted =
-          hasMultiHighlight && arc.farm.id === highlightedId;
+        const { fromRgb, toRgb } = getFactoryColorPair(arc.farm);
+        rawEntries.push({
+          kind: 'factory',
+          arcId: arc.arcId,
+          targetFarmId: arc.farm.id,
+          p0,
+          p1,
+          p2,
+          transitMs: arc.transitMs,
+          cycleMs: arc.cycleMs,
+          startDelayMs: arc.startDelayMs,
+          fromRgb,
+          toRgb,
+          baseLineOpacity: 0.25,
+        });
+      }
+
+      for (const dArc of disinfectionArcs) {
+        const liveCfg = activeDisinfectionConfigs[dArc.washKey];
+        if (
+          liveCfg &&
+          Array.isArray(liveCfg.targetFarmKeys) &&
+          !liveCfg.targetFarmKeys.includes(dArc.targetKey)
+        ) {
+          continue;
+        }
+
+        const p0 = map.project([dArc.washLng, dArc.washLat]);
+        const p1 = map.project(dArc.ctrlPt);
+        const p2 = map.project([dArc.farmLng, dArc.farmLat]);
+
+        const minX = Math.min(p0.x, p1.x, p2.x);
+        const maxX = Math.max(p0.x, p1.x, p2.x);
+        const minY = Math.min(p0.y, p1.y, p2.y);
+        const maxY = Math.max(p0.y, p1.y, p2.y);
+        if (
+          maxX < -120 ||
+          minX > vw + 120 ||
+          maxY < -120 ||
+          minY > vh + 120
+        ) {
+          continue;
+        }
+
+        const { fromRgb, toRgb } = getDisinfectionColorPair(dArc);
+        rawEntries.push({
+          kind: 'wash',
+          arcId: dArc.arcId,
+          targetFarmId: dArc.targetFarm.id,
+          p0,
+          p1,
+          p2,
+          transitMs: dArc.transitMs,
+          cycleMs: dArc.cycleMs,
+          startDelayMs: dArc.startDelayMs,
+          fromRgb,
+          toRgb,
+          baseLineOpacity: 0.22,
+        });
+      }
+
+      if (rawEntries.length === 0) return;
+
+      const highlightedId = highlightedArcFarmIdRef.current;
+      const isEntryMatch = (entry: RenderArcEntry) =>
+        highlightedId !== null &&
+        (entry.arcId === highlightedId || entry.targetFarmId === highlightedId);
+
+      const hasMultiHighlight =
+        rawEntries.length > 1 &&
+        highlightedId !== null &&
+        rawEntries.some((entry) => isEntryMatch(entry));
+
+      const projectedNormal: Array<{
+        entry: RenderArcEntry;
+        isHighlighted: boolean;
+        isDimmed: boolean;
+      }> = [];
+      const projectedHighlighted: Array<{
+        entry: RenderArcEntry;
+        isHighlighted: boolean;
+        isDimmed: boolean;
+      }> = [];
+
+      for (const entry of rawEntries) {
+        const isHighlighted = hasMultiHighlight && isEntryMatch(entry);
         const isDimmed = hasMultiHighlight && !isHighlighted;
-        const entry = { arc, p0, p1, p2, isHighlighted, isDimmed };
+        const wrapped = { entry, isHighlighted, isDimmed };
         if (isHighlighted) {
-          highlightedItem = entry;
+          projectedHighlighted.push(wrapped);
         } else {
-          projectedArcs.push(entry);
+          projectedNormal.push(wrapped);
         }
       }
 
-      if (highlightedItem) {
-        projectedArcs.push(highlightedItem);
-      }
+      const projectedArcs = [...projectedNormal, ...projectedHighlighted];
 
       ctx.save();
-      const activeColors = colorsRef.current;
 
-      const getRouteColorPair = (farm: Farm): ResolvedRouteColorPair =>
-        farm.category === 'pig'
-          ? activeColors.pig
-          : farm.category === 'chicken'
-          ? activeColors.chicken
-          : activeColors.other;
-
-      // 1. Vẽ đường dẫn Bezier mảnh bằng gradient từ Màu đầu (Nhà máy) ➔ Màu cuối (Trại) (opacity 0.25)
-      //    Khi hover: làm nổi bật tuyến đang chọn bằng màu cuối tùy chỉnh (2px, opacity 0.9) và làm mờ các tuyến khác (0.05)
+      // 1. Vẽ đường dẫn Bezier mảnh gradient từ Màu đầu ➔ Màu cuối (Nhà máy: 0.25, Điểm rửa xe: 0.22; highlight: 0.9)
       for (const item of projectedArcs) {
-        const { arc, p0, p1, p2, isHighlighted, isDimmed } = item;
-        const { fromRgb, toRgb } = getRouteColorPair(arc.farm);
-        const lineOpacity = isHighlighted ? 0.9 : isDimmed ? 0.05 : 0.25;
+        const { entry, isHighlighted, isDimmed } = item;
+        const { p0, p1, p2, fromRgb, toRgb, baseLineOpacity } = entry;
+        const lineOpacity = isHighlighted
+          ? 0.9
+          : isDimmed
+          ? 0.05
+          : baseLineOpacity;
 
         ctx.beginPath();
         ctx.moveTo(p0.x, p0.y);
@@ -3492,15 +3914,15 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         ctx.stroke();
       }
 
-      // 2. Vẽ vòng gợn sóng tại chân icon trang trại đúng khoảnh khắc chấm hàng cập bến theo màu cuối đang chọn
+      // 2. Vẽ vòng gợn sóng tại chân icon trang trại đúng khoảnh khắc chấm hàng/sát trùng cập bến theo màu cuối đang chọn
       for (const item of projectedArcs) {
-        const { arc, p2, isHighlighted, isDimmed } = item;
+        const { entry, isHighlighted, isDimmed } = item;
+        const { p2, transitMs, cycleMs, startDelayMs, toRgb } = entry;
         const phaseMs =
-          (((nowMs + arc.startDelayMs) % arc.cycleMs) + arc.cycleMs) %
-          arc.cycleMs;
-        if (phaseMs < arc.transitMs) continue;
+          (((nowMs + startDelayMs) % cycleMs) + cycleMs) % cycleMs;
+        if (phaseMs < transitMs) continue;
 
-        const rippleElapsed = phaseMs - arc.transitMs;
+        const rippleElapsed = phaseMs - transitMs;
         if (rippleElapsed >= ARRIVAL_RIPPLE_DURATION_MS) continue;
 
         const rp = rippleElapsed / ARRIVAL_RIPPLE_DURATION_MS;
@@ -3511,7 +3933,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
           Math.pow(1 - rp, 1.5);
         if (ringAlpha <= 0.02) continue;
 
-        const [r, g, b] = getRouteColorPair(arc.farm).toRgb;
+        const [r, g, b] = toRgb;
         ctx.beginPath();
         ctx.arc(p2.x, p2.y, ringRadius, 0, Math.PI * 2);
         ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${(ringAlpha * 0.14).toFixed(
@@ -3526,19 +3948,19 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
       // 3. Vẽ chấm tròn sắc nét (radius 3.5px, viền trắng 1.5px) nội suy màu mượt từ Màu đầu ➔ Màu cuối dọc hành trình t (0 ➔ 1)
       ctx.lineWidth = 1.5;
       for (const item of projectedArcs) {
-        const { arc, p0, p1, p2, isHighlighted, isDimmed } = item;
+        const { entry, isHighlighted, isDimmed } = item;
+        const { p0, p1, p2, transitMs, cycleMs, startDelayMs, fromRgb, toRgb } =
+          entry;
         const phaseMs =
-          (((nowMs + arc.startDelayMs) % arc.cycleMs) + arc.cycleMs) %
-          arc.cycleMs;
-        if (phaseMs > arc.transitMs) continue;
+          (((nowMs + startDelayMs) % cycleMs) + cycleMs) % cycleMs;
+        if (phaseMs > transitMs) continue;
 
-        const rawT = phaseMs / arc.transitMs;
+        const rawT = phaseMs / transitMs;
         const inv = 1 - rawT;
         const x = inv * inv * p0.x + 2 * inv * rawT * p1.x + rawT * rawT * p2.x;
         const y = inv * inv * p0.y + 2 * inv * rawT * p1.y + rawT * rawT * p2.y;
 
         const dotRadius = isHighlighted ? 4 : 3.5;
-        const { fromRgb, toRgb } = getRouteColorPair(arc.farm);
         const r = Math.round(fromRgb[0] + (toRgb[0] - fromRgb[0]) * rawT);
         const g = Math.round(fromRgb[1] + (toRgb[1] - fromRgb[1]) * rawT);
         const b = Math.round(fromRgb[2] + (toRgb[2] - fromRgb[2]) * rawT);
@@ -3558,13 +3980,13 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
 
     drawParticlesFrameRef.current = drawParticlesFrame;
 
-    // Vòng lặp requestAnimationFrame mượt 60fps cho các chấm sáng chuyển động một chiều từ FEED FACTORY ➔ Trại
+    const hasActiveCanvasRoutes =
+      (showFactoryArcs && cachedArcGeometries.length > 0) ||
+      cachedDisinfectionArcs.length > 0;
+
+    // Vòng lặp requestAnimationFrame mượt 60fps cho các chấm sáng chuyển động một chiều từ FEED FACTORY & Điểm rửa xe ➔ Trại
     useEffect(() => {
-      if (
-        stage !== 'map' ||
-        !showFactoryArcs ||
-        cachedArcGeometries.length === 0
-      ) {
+      if (stage !== 'map' || !hasActiveCanvasRoutes) {
         if (particlesRafRef.current !== null) {
           cancelAnimationFrame(particlesRafRef.current);
           particlesRafRef.current = null;
@@ -3588,7 +4010,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
           particlesRafRef.current = null;
         }
       };
-    }, [stage, showFactoryArcs, cachedArcGeometries, drawParticlesFrame]);
+    }, [stage, hasActiveCanvasRoutes, drawParticlesFrame]);
 
     const syncProjectedPositions = useCallback(() => {
       const map = mapRef.current;
@@ -3638,24 +4060,49 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
           | maplibregl.GeoJSONSource
           | undefined;
         if (hitSource) {
-          if (
-            stage === 'map' &&
-            showFactoryArcs &&
-            cachedArcGeometries.length > 0
-          ) {
-            hitSource.setData({
-              type: 'FeatureCollection',
-              features: cachedArcGeometries.map((arc) => ({
+          if (stage === 'map' && hasActiveCanvasRoutes) {
+            const features: Array<{
+              type: 'Feature';
+              properties: Record<string, string>;
+              geometry: { type: 'LineString'; coordinates: Array<[number, number]> };
+            }> = [];
+            if (showFactoryArcs) {
+              cachedArcGeometries.forEach((arc) => {
+                features.push({
+                  type: 'Feature',
+                  properties: {
+                    id: `bezier-${arc.farm.id}`,
+                    arcId: arc.arcId,
+                    kind: 'factory',
+                    farmId: arc.farm.id,
+                  },
+                  geometry: {
+                    type: 'LineString',
+                    coordinates: arc.fullCoords,
+                  },
+                });
+              });
+            }
+            cachedDisinfectionArcs.forEach((dArc) => {
+              features.push({
                 type: 'Feature',
                 properties: {
-                  id: `bezier-${arc.farm.id}`,
-                  farmId: arc.farm.id,
+                  id: `bezier-wash-${dArc.washKey}-${dArc.targetKey}`,
+                  arcId: dArc.arcId,
+                  kind: 'wash',
+                  farmId: dArc.targetFarm.id,
+                  washName: dArc.washFarm.name,
+                  targetName: dArc.targetFarm.name,
                 },
                 geometry: {
                   type: 'LineString',
-                  coordinates: arc.fullCoords,
+                  coordinates: dArc.fullCoords,
                 },
-              })),
+              });
+            });
+            hitSource.setData({
+              type: 'FeatureCollection',
+              features,
             });
           } else {
             hitSource.setData({
@@ -3675,6 +4122,8 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
       return () => cancelAnimationFrame(rafId);
     }, [
       cachedArcGeometries,
+      cachedDisinfectionArcs,
+      hasActiveCanvasRoutes,
       ripplePoints,
       showFactoryArcs,
       stage,
@@ -3746,8 +4195,8 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
           />
         )}
 
-        {/* Lớp Canvas các chấm sáng chuyển động một chiều từ FEED FACTORY ➔ Trại (không vẽ đường nét tĩnh) */}
-        {stage === 'map' && showFactoryArcs && (
+        {/* Lớp Canvas các chấm sáng chuyển động một chiều từ FEED FACTORY & Điểm rửa xe ➔ Trại */}
+        {stage === 'map' && hasActiveCanvasRoutes && (
           <canvas
             ref={particlesCanvasRef}
             className="pointer-events-none fixed inset-0 z-10"

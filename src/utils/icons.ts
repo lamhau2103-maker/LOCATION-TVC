@@ -175,6 +175,19 @@ export function isFeedMillText(rawType = '', rawName = ''): boolean {
   );
 }
 
+export function isDisinfectionPointText(rawType = '', rawName = ''): boolean {
+  const norm = normalizeMatchText(`${rawType} ${rawName}`);
+  if (!norm) return false;
+  return (
+    norm.includes('diem rua') ||
+    norm.includes('rua xe') ||
+    norm.includes('tram rua') ||
+    norm.includes('sat khuan') ||
+    norm.includes('sat trung') ||
+    norm.includes('khu trung')
+  );
+}
+
 /**
  * Phân loại chi tiết cho nhóm "Khác" (nhà máy cám / văn phòng / kho / điểm rửa xe / nhà trại khác)
  */
@@ -182,10 +195,16 @@ export function detectOtherSubType(
   rawType = '',
   rawName = ''
 ): Exclude<FarmSubType, 'chicken' | 'pig'> {
+  const normName = normalizeMatchText(rawName);
   const norm = normalizeMatchText(`${rawType} ${rawName}`);
   const padded = ` ${norm} `;
 
-  // Nhận diện Nhà Máy Cám trước tiên để không bị nhầm thành Văn phòng
+  // Ưu tiên nhận diện Điểm Rửa / Điểm rửa xe theo tên địa điểm trước
+  if (isDisinfectionPointText('', normName) || isDisinfectionPointText(rawType, rawName)) {
+    return 'wash';
+  }
+
+  // Nhận diện Nhà Máy Cám để không bị nhầm thành Văn phòng
   if (
     norm.includes('nha may cam') ||
     norm.includes('nha may') ||
@@ -194,17 +213,6 @@ export function detectOtherSubType(
     norm.includes('factory')
   ) {
     return 'hub';
-  }
-
-  if (
-    norm.includes('rua xe') ||
-    norm.includes('diem rua') ||
-    norm.includes('tram rua') ||
-    norm.includes('sat khuan') ||
-    norm.includes('sat trung') ||
-    norm.includes('khu trung')
-  ) {
-    return 'wash';
   }
 
   if (norm.includes('kho') || norm.includes('warehouse')) {
@@ -245,19 +253,15 @@ export function getDefaultLocationLabel(farm: {
   const normName = normalizeMatchText(farm.name || '');
   const normAll = normalizeMatchText(`${farm.type || ''} ${farm.name || ''}`);
 
-  if (farm.isFeedMill || farm.subType === 'hub' || isFeedMillText(farm.type, farm.name)) {
-    return 'Nhà máy cám';
-  }
-
   if (
     farm.subType === 'wash' ||
-    normAll.includes('rua xe') ||
-    normAll.includes('diem rua') ||
-    normAll.includes('tram rua') ||
-    normAll.includes('sat khuan') ||
-    normAll.includes('sat trung')
+    isDisinfectionPointText(farm.type || '', farm.name || '')
   ) {
     return 'Điểm rửa xe';
+  }
+
+  if (farm.isFeedMill || farm.subType === 'hub' || isFeedMillText(farm.type, farm.name)) {
+    return 'Nhà máy cám';
   }
 
   if (

@@ -7,6 +7,7 @@ import {
   ChevronRight,
   ChevronUp,
   Copy,
+  Droplets,
   GitCommitHorizontal,
   Lock,
   MapPin,
@@ -14,6 +15,7 @@ import {
   Pencil,
   Radio,
   RotateCcw,
+  Search,
   Share2,
   ShieldAlert,
   ShieldCheck,
@@ -22,6 +24,7 @@ import {
 } from 'lucide-react';
 import {
   APP_CONFIG,
+  DEFAULT_DISINFECTION_ROUTE_COLORS,
   getCategoryConfig,
   PRESET_LOCATION_LABELS,
   RESPONSIVE_BREAKPOINTS,
@@ -29,6 +32,8 @@ import {
 import {
   ArcColorConfig,
   CentralHub,
+  DisinfectionRouteConfig,
+  DisinfectionRoutesMap,
   DrivingDistanceCache,
   Farm,
   FarmCategory,
@@ -44,6 +49,7 @@ import {
   getDefaultLocationLabel,
   getFarmKey,
   getLocationDisplayLabel,
+  normalizeMatchText,
   resolveFarmIconType,
 } from '../utils/icons';
 import { CountUp } from './CountUp';
@@ -103,6 +109,15 @@ interface FarmDetailCardProps {
   onChangeMobileSheetSnap?: (snap: MobileSheetSnap) => void;
   drivingDistanceCache?: DrivingDistanceCache;
   isCalculatingDistances?: boolean;
+  allFarms?: Farm[];
+  disinfectionRoutes?: DisinfectionRoutesMap;
+  onSaveDisinfectionRoute?: (
+    farm: Farm,
+    config: DisinfectionRouteConfig
+  ) => Promise<void>;
+  onPreviewDisinfectionRoute?: (
+    preview: { farmKey: string; config: DisinfectionRouteConfig } | null
+  ) => void;
 }
 
 function useDeviceCardMode() {
@@ -169,6 +184,10 @@ export const FarmDetailCard: React.FC<FarmDetailCardProps> = ({
   onChangeMobileSheetSnap,
   drivingDistanceCache,
   isCalculatingDistances = false,
+  allFarms = [],
+  disinfectionRoutes,
+  onSaveDisinfectionRoute,
+  onPreviewDisinfectionRoute,
 }) => {
   const [tilt, setTilt] = useState({ rotateX: 0, rotateY: 0 });
   const [copied, setCopied] = useState(false);
@@ -257,6 +276,123 @@ export const FarmDetailCard: React.FC<FarmDetailCardProps> = ({
     setIsEditingLabel(false);
     setLabelInput(displayCategoryLabel);
   }, [farm.id, displayCategoryLabel]);
+
+  const isWashPoint = farm.subType === 'wash';
+  const savedDisinfectionConfig: DisinfectionRouteConfig = React.useMemo(() => {
+    const existing = disinfectionRoutes?.[farmKey];
+    if (existing) {
+      return {
+        targetFarmKeys: Array.isArray(existing.targetFarmKeys)
+          ? existing.targetFarmKeys
+          : [],
+        fromColor: existing.fromColor || DEFAULT_DISINFECTION_ROUTE_COLORS.from,
+        toColor: existing.toColor || DEFAULT_DISINFECTION_ROUTE_COLORS.to,
+      };
+    }
+    return {
+      targetFarmKeys: [],
+      fromColor: DEFAULT_DISINFECTION_ROUTE_COLORS.from,
+      toColor: DEFAULT_DISINFECTION_ROUTE_COLORS.to,
+    };
+  }, [disinfectionRoutes, farmKey]);
+
+  const [draftDisinfection, setDraftDisinfection] =
+    useState<DisinfectionRouteConfig>(savedDisinfectionConfig);
+  const [isDisinfectionPanelOpen, setIsDisinfectionPanelOpen] = useState(true);
+  const [disinfectionSearch, setDisinfectionSearch] = useState('');
+  const [disinfectionFilter, setDisinfectionFilter] = useState<
+    'all' | 'pig' | 'chicken'
+  >('all');
+  const [isSavingDisinfection, setIsSavingDisinfection] = useState(false);
+  const [disinfectionError, setDisinfectionError] = useState('');
+
+  useEffect(() => {
+    setDraftDisinfection(savedDisinfectionConfig);
+    setDisinfectionError('');
+    setDisinfectionSearch('');
+  }, [farmKey, savedDisinfectionConfig]);
+
+  useEffect(() => {
+    return () => {
+      onPreviewDisinfectionRoute?.(null);
+    };
+  }, [farmKey, onPreviewDisinfectionRoute]);
+
+  const isHexComplete = (val: string) => /^#[0-9a-fA-F]{6}$/.test(val.trim());
+
+  const applyDraftDisinfection = (next: DisinfectionRouteConfig) => {
+    setDraftDisinfection(next);
+    if (onPreviewDisinfectionRoute) {
+      onPreviewDisinfectionRoute({
+        farmKey,
+        config: {
+          targetFarmKeys: next.targetFarmKeys,
+          fromColor: isHexComplete(next.fromColor)
+            ? next.fromColor.trim()
+            : savedDisinfectionConfig.fromColor,
+          toColor: isHexComplete(next.toColor)
+            ? next.toColor.trim()
+            : savedDisinfectionConfig.toColor,
+        },
+      });
+    }
+  };
+
+  const toggleDisinfectionTargetFarm = (targetKey: string) => {
+    const exists = draftDisinfection.targetFarmKeys.includes(targetKey);
+    const nextKeys = exists
+      ? draftDisinfection.targetFarmKeys.filter((k) => k !== targetKey)
+      : [...draftDisinfection.targetFarmKeys, targetKey];
+    applyDraftDisinfection({
+      ...draftDisinfection,
+      targetFarmKeys: nextKeys,
+    });
+  };
+
+  const assignableFarms = React.useMemo(
+    () =>
+      allFarms
+        .filter(
+          (f) =>
+            !f.isFeedMill &&
+            (f.category === 'pig' || f.category === 'chicken')
+        )
+        .sort((a, b) => a.name.localeCompare(b.name, 'vi')),
+    [allFarms]
+  );
+
+  const filteredAssignableFarms = React.useMemo(() => {
+    const normQuery = normalizeMatchText(disinfectionSearch);
+    return assignableFarms.filter((f) => {
+      if (disinfectionFilter !== 'all' && f.category !== disinfectionFilter) {
+        return false;
+      }
+      if (!normQuery) return true;
+      return normalizeMatchText(f.name).includes(normQuery);
+    });
+  }, [assignableFarms, disinfectionFilter, disinfectionSearch]);
+
+  const hasUnsavedDisinfection =
+    JSON.stringify({
+      ...draftDisinfection,
+      targetFarmKeys: [...draftDisinfection.targetFarmKeys].sort(),
+    }) !==
+    JSON.stringify({
+      ...savedDisinfectionConfig,
+      targetFarmKeys: [...savedDisinfectionConfig.targetFarmKeys].sort(),
+    });
+
+  const DISINFECTION_PRESETS = [
+    {
+      name: 'Mặc định',
+      from: DEFAULT_DISINFECTION_ROUTE_COLORS.from,
+      to: DEFAULT_DISINFECTION_ROUTE_COLORS.to,
+    },
+    { name: 'Hoàng hôn', from: '#F59E0B', to: '#EF4444' },
+    { name: 'Đại dương', from: '#2563EB', to: '#14B8A6' },
+    { name: 'Rừng xanh', from: '#059669', to: '#34D399' },
+    { name: 'Tím neon', from: '#8B5CF6', to: '#EC4899' },
+  ];
 
   const statusCfg =
     APP_CONFIG.colors.statuses[farm.status] ||
@@ -753,6 +889,368 @@ export const FarmDetailCard: React.FC<FarmDetailCardProps> = ({
                 </div>
               </div>
             )}
+
+            {/* Khối "PHÂN LUỒNG TRẠI ĐƯỢC PHỤ TRÁCH" dành riêng cho Quản trị viên khi chọn Điểm rửa xe */}
+            {isAdmin && isWashPoint && onSaveDisinfectionRoute && (
+              <div className="mb-3.5 rounded-2xl border border-[#0ea5e9]/35 bg-gradient-to-br from-sky-50/95 via-cyan-50/75 to-white p-3 text-xs">
+                <div className="flex items-center justify-between gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsDisinfectionPanelOpen((prev) => !prev)}
+                    className="flex min-w-0 items-center gap-1.5 font-extrabold tracking-wide text-[#0284c7] cursor-pointer"
+                  >
+                    <Droplets className="h-3.5 w-3.5 shrink-0" />
+                    <span className="truncate text-[11px]">
+                      PHÂN LUỒNG TRẠI ĐƯỢC PHỤ TRÁCH {isDisinfectionPanelOpen ? '▲' : '▼'}
+                    </span>
+                  </button>
+                  <div className="flex shrink-0 items-center gap-1.5">
+                    {hasUnsavedDisinfection && (
+                      <span className="animate-pulse text-[10px] font-extrabold text-amber-600">
+                        Chưa lưu
+                      </span>
+                    )}
+                    <span className="rounded-full bg-[#0ea5e9]/15 px-2 py-0.5 text-[10px] font-extrabold text-[#0284c7]">
+                      {draftDisinfection.targetFarmKeys.length} trại
+                    </span>
+                  </div>
+                </div>
+
+                {isDisinfectionPanelOpen && (
+                  <div className="mt-2.5 space-y-2.5">
+                    {/* Bộ lọc nhanh Tất cả | Trại heo | Trại gà */}
+                    <div className="flex flex-wrap items-center justify-between gap-1.5">
+                      <div className="flex gap-1">
+                        {(
+                          [
+                            { id: 'all', label: `Tất cả (${assignableFarms.length})` },
+                            {
+                              id: 'pig',
+                              label: `Trại heo (${assignableFarms.filter((f) => f.category === 'pig').length})`,
+                            },
+                            {
+                              id: 'chicken',
+                              label: `Trại gà (${assignableFarms.filter((f) => f.category === 'chicken').length})`,
+                            },
+                          ] as const
+                        ).map((tab) => (
+                          <button
+                            key={tab.id}
+                            type="button"
+                            onClick={() => setDisinfectionFilter(tab.id)}
+                            className={`rounded-full px-2.5 py-1 text-[10px] font-extrabold transition-colors cursor-pointer ${
+                              disinfectionFilter === tab.id
+                                ? 'bg-[#0284c7] text-white shadow-2xs'
+                                : 'border border-emerald-950/15 bg-white text-[#0f2a24] hover:border-[#0ea5e9]'
+                            }`}
+                          >
+                            {tab.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Ô tìm kiếm tên trại */}
+                    <div className="relative">
+                      <Search className="pointer-events-none absolute top-1/2 left-2.5 h-3.5 w-3.5 -translate-y-1/2 text-emerald-950/45" />
+                      <input
+                        type="text"
+                        value={disinfectionSearch}
+                        onChange={(e) => setDisinfectionSearch(e.target.value)}
+                        placeholder="Tìm kiếm tên trại heo / trại gà..."
+                        className="w-full rounded-xl border border-emerald-950/15 bg-white py-1.5 pr-7 pl-8 text-[16px] font-semibold text-[#0f2a24] placeholder:text-emerald-950/40 focus:border-[#0ea5e9] focus:outline-none sm:text-xs"
+                      />
+                      {disinfectionSearch && (
+                        <button
+                          type="button"
+                          onClick={() => setDisinfectionSearch('')}
+                          aria-label="Xoá từ khoá tìm trại"
+                          className="absolute top-1/2 right-2 -translate-y-1/2 text-emerald-950/45 hover:text-[#d9261c] cursor-pointer"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Chọn nhanh danh sách đang lọc */}
+                    <div className="flex items-center justify-between text-[10px] font-bold text-emerald-950/65">
+                      <span>Chọn trại nhận luồng sát trùng:</span>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const filteredKeys = filteredAssignableFarms.map(
+                              (f) => f.farmKey || getFarmKey(f.lat, f.lng)
+                            );
+                            const merged = Array.from(
+                              new Set([
+                                ...draftDisinfection.targetFarmKeys,
+                                ...filteredKeys,
+                              ])
+                            );
+                            applyDraftDisinfection({
+                              ...draftDisinfection,
+                              targetFarmKeys: merged,
+                            });
+                          }}
+                          className="text-[#0284c7] hover:underline cursor-pointer"
+                        >
+                          Chọn mục đang lọc
+                        </button>
+                        <span>·</span>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            applyDraftDisinfection({
+                              ...draftDisinfection,
+                              targetFarmKeys: [],
+                            })
+                          }
+                          className="text-rose-600 hover:underline cursor-pointer"
+                        >
+                          Bỏ chọn hết
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Danh sách multi-select trại */}
+                    <div className="max-h-44 space-y-1 overflow-y-auto rounded-xl border border-emerald-950/10 bg-white/90 p-1.5">
+                      {filteredAssignableFarms.length === 0 ? (
+                        <div className="py-4 text-center text-[11px] font-semibold text-emerald-950/50">
+                          Không tìm thấy trại phù hợp
+                        </div>
+                      ) : (
+                        filteredAssignableFarms.map((targetFarm) => {
+                          const targetKey =
+                            targetFarm.farmKey ||
+                            getFarmKey(targetFarm.lat, targetFarm.lng);
+                          const isChecked =
+                            draftDisinfection.targetFarmKeys.includes(
+                              targetKey
+                            );
+                          return (
+                            <label
+                              key={targetFarm.id}
+                              className={`flex items-center gap-2 rounded-lg px-2 py-1.5 text-[11px] font-bold transition-colors cursor-pointer ${
+                                isChecked
+                                  ? 'bg-sky-50 text-[#0f2a24]'
+                                  : 'text-[#0f2a24]/80 hover:bg-emerald-950/[0.04]'
+                              }`}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={isChecked}
+                                onChange={() =>
+                                  toggleDisinfectionTargetFarm(targetKey)
+                                }
+                                className="h-3.5 w-3.5 shrink-0 accent-[#0ea5e9] cursor-pointer"
+                              />
+                              <CuteCategoryIcon
+                                category={targetFarm.category}
+                                className="h-3.5 w-3.5 shrink-0"
+                              />
+                              <span className="min-w-0 flex-1 truncate">
+                                {targetFarm.name}
+                              </span>
+                              <span
+                                className={`shrink-0 rounded px-1.5 py-0.5 text-[9.5px] font-extrabold ${
+                                  targetFarm.category === 'pig'
+                                    ? 'bg-rose-50 text-rose-600'
+                                    : 'bg-amber-50 text-amber-600'
+                                }`}
+                              >
+                                {targetFarm.category === 'pig' ? 'Heo' : 'Gà'}
+                              </span>
+                            </label>
+                          );
+                        })
+                      )}
+                    </div>
+
+                    {/* Tuỳ chỉnh màu tia luồng sát trùng */}
+                    <div className="space-y-2 rounded-xl border border-emerald-950/10 bg-white/85 p-2.5">
+                      <div className="flex flex-wrap items-center gap-1">
+                        <span className="mr-1 text-[10px] font-bold text-emerald-950/70">
+                          Bộ phối:
+                        </span>
+                        {DISINFECTION_PRESETS.map((pal) => (
+                          <button
+                            key={pal.name}
+                            type="button"
+                            onClick={() =>
+                              applyDraftDisinfection({
+                                ...draftDisinfection,
+                                fromColor: pal.from,
+                                toColor: pal.to,
+                              })
+                            }
+                            className="rounded-full border border-emerald-950/15 bg-white px-2 py-0.5 text-[10px] font-bold text-[#0f2a24] hover:border-[#0ea5e9] cursor-pointer"
+                          >
+                            {pal.name}
+                          </button>
+                        ))}
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="block text-[10px] font-bold text-emerald-950/65">
+                            Màu đầu (Điểm rửa):
+                          </label>
+                          <div className="mt-0.5 flex items-center gap-1.5">
+                            <input
+                              type="color"
+                              value={
+                                isHexComplete(draftDisinfection.fromColor)
+                                  ? draftDisinfection.fromColor
+                                  : savedDisinfectionConfig.fromColor
+                              }
+                              onChange={(e) =>
+                                applyDraftDisinfection({
+                                  ...draftDisinfection,
+                                  fromColor: e.target.value,
+                                })
+                              }
+                              className="h-7 w-7 cursor-pointer rounded border border-emerald-950/20"
+                            />
+                            <input
+                              type="text"
+                              value={draftDisinfection.fromColor}
+                              onChange={(e) =>
+                                applyDraftDisinfection({
+                                  ...draftDisinfection,
+                                  fromColor: e.target.value,
+                                })
+                              }
+                              className="w-20 rounded border border-emerald-950/20 px-1.5 py-1 font-mono text-[11px] uppercase"
+                            />
+                          </div>
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-bold text-emerald-950/65">
+                            Màu cuối (Trại):
+                          </label>
+                          <div className="mt-0.5 flex items-center gap-1.5">
+                            <input
+                              type="color"
+                              value={
+                                isHexComplete(draftDisinfection.toColor)
+                                  ? draftDisinfection.toColor
+                                  : savedDisinfectionConfig.toColor
+                              }
+                              onChange={(e) =>
+                                applyDraftDisinfection({
+                                  ...draftDisinfection,
+                                  toColor: e.target.value,
+                                })
+                              }
+                              className="h-7 w-7 cursor-pointer rounded border border-emerald-950/20"
+                            />
+                            <input
+                              type="text"
+                              value={draftDisinfection.toColor}
+                              onChange={(e) =>
+                                applyDraftDisinfection({
+                                  ...draftDisinfection,
+                                  toColor: e.target.value,
+                                })
+                              }
+                              className="w-20 rounded border border-emerald-950/20 px-1.5 py-1 font-mono text-[11px] uppercase"
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 text-[10px] font-bold text-emerald-950/65">
+                        <span>Xem trước tia:</span>
+                        <span
+                          className="h-2.5 flex-1 rounded-full shadow-2xs"
+                          style={{
+                            background: `linear-gradient(90deg, ${
+                              isHexComplete(draftDisinfection.fromColor)
+                                ? draftDisinfection.fromColor
+                                : savedDisinfectionConfig.fromColor
+                            }, ${
+                              isHexComplete(draftDisinfection.toColor)
+                                ? draftDisinfection.toColor
+                                : savedDisinfectionConfig.toColor
+                            })`,
+                          }}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Nút Huỷ & Lưu cấu hình lên Upstash */}
+                    <div className="flex items-center justify-end gap-2 pt-0.5">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setDraftDisinfection(savedDisinfectionConfig);
+                          setDisinfectionError('');
+                          onPreviewDisinfectionRoute?.(null);
+                        }}
+                        className="rounded-lg bg-emerald-950/10 px-2.5 py-1.5 text-[11px] font-bold text-[#0f2a24] cursor-pointer"
+                      >
+                        Huỷ
+                      </button>
+                      <button
+                        type="button"
+                        disabled={isSavingDisinfection}
+                        onClick={async () => {
+                          setIsSavingDisinfection(true);
+                          setDisinfectionError('');
+                          try {
+                            await onSaveDisinfectionRoute(farm, {
+                              targetFarmKeys: draftDisinfection.targetFarmKeys,
+                              fromColor: isHexComplete(
+                                draftDisinfection.fromColor
+                              )
+                                ? draftDisinfection.fromColor.trim()
+                                : savedDisinfectionConfig.fromColor,
+                              toColor: isHexComplete(draftDisinfection.toColor)
+                                ? draftDisinfection.toColor.trim()
+                                : savedDisinfectionConfig.toColor,
+                            });
+                          } catch (err) {
+                            setDisinfectionError(
+                              err instanceof Error
+                                ? err.message
+                                : 'Lỗi lưu cấu hình lên Upstash.'
+                            );
+                          } finally {
+                            setIsSavingDisinfection(false);
+                          }
+                        }}
+                        className="rounded-lg bg-[#0284c7] px-3.5 py-1.5 text-[11px] font-extrabold text-white shadow-xs hover:bg-[#0369a1] disabled:opacity-60 cursor-pointer"
+                      >
+                        {isSavingDisinfection
+                          ? 'Đang lưu...'
+                          : 'Lưu cấu hình lên Upstash'}
+                      </button>
+                    </div>
+                    {disinfectionError && (
+                      <div className="text-[10px] font-bold text-rose-600">
+                        {disinfectionError}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Tóm tắt luồng sát trùng cho người xem thường (nếu Điểm rửa xe đã được cấu hình trại) */}
+            {!isAdmin &&
+              isWashPoint &&
+              savedDisinfectionConfig.targetFarmKeys.length > 0 && (
+                <div className="mb-3.5 flex items-center justify-between gap-2 rounded-2xl border border-sky-200 bg-sky-50/85 px-3 py-2 text-xs font-bold text-[#0284c7]">
+                  <span className="flex items-center gap-1.5">
+                    <Droplets className="h-3.5 w-3.5 shrink-0" />
+                    <span>Luồng sát trùng đang phụ trách</span>
+                  </span>
+                  <span className="rounded-full bg-white px-2.5 py-0.5 text-[11px] font-extrabold shadow-2xs">
+                    {savedDisinfectionConfig.targetFarmKeys.length} trại
+                  </span>
+                </div>
+              )}
 
             {/* Mô tả chi tiết */}
             {farm.description && (

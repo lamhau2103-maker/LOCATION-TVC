@@ -1,6 +1,10 @@
 import { detectFarmStatus } from '../config';
 import { Farm, ParseResult } from '../types';
-import { resolveFarmIconType } from './icons';
+import {
+  getFarmKey,
+  resolveFarmIconType,
+  resolveFarmSubType,
+} from './icons';
 
 /**
  * Kiểm tra và chuẩn hoá toạ độ (lat, lng) giữ nguyên 100% độ chính xác gốc:
@@ -247,6 +251,13 @@ export function parseKMLContent(
       name,
       description: cleanedDesc,
     });
+    const subType = resolveFarmSubType({
+      lat,
+      lng,
+      type: rawType,
+      name,
+      description: cleanedDesc,
+    });
     const statusText = `${cleanedDesc} ${JSON.stringify(extendedData)}`;
     const status = detectFarmStatus(statusText);
 
@@ -254,14 +265,17 @@ export function parseKMLContent(
     if (rawType === 'Trang trại') {
       if (category === 'chicken') displayType = 'Trại gà';
       else if (category === 'pig') displayType = 'Trại heo';
+      else if (subType === 'wash') displayType = 'Điểm rửa xe';
       else displayType = 'Khác';
     }
 
     farms.push({
       id: buildStableFarmId('kml', name, lat, lng, index),
+      farmKey: getFarmKey(lat, lng),
       name,
       type: displayType,
       category,
+      subType,
       status,
       lat,
       lng,
@@ -479,6 +493,13 @@ export function parseCSVContent(
       name,
       description,
     });
+    const subType = resolveFarmSubType({
+      lat,
+      lng,
+      type: rawType,
+      name,
+      description,
+    });
     const status = detectFarmStatus(
       `${description} ${JSON.stringify(extendedData)}`
     );
@@ -487,14 +508,17 @@ export function parseCSVContent(
     if (rawType === 'Trang trại') {
       if (category === 'chicken') displayType = 'Trại gà';
       else if (category === 'pig') displayType = 'Trại heo';
+      else if (subType === 'wash') displayType = 'Điểm rửa xe';
       else displayType = 'Khác';
     }
 
     farms.push({
       id: buildStableFarmId('csv', name, lat, lng, i),
+      farmKey: getFarmKey(lat, lng),
       name,
       type: displayType,
       category,
+      subType,
       status,
       lat,
       lng,
@@ -561,14 +585,23 @@ export function parseGeoJSONContent(
         name,
         description: item.description || '',
       });
+      const subType = resolveFarmSubType({
+        lat,
+        lng,
+        type: rawType,
+        name,
+        description: item.description || '',
+      });
       const status =
         item.status || detectFarmStatus(item.description || '');
 
       farms.push({
         id: item.id || buildStableFarmId('json', name, lat, lng, idx),
+        farmKey: getFarmKey(lat, lng),
         name,
         type: rawType,
         category,
+        subType,
         status,
         lat,
         lng,
@@ -654,15 +687,24 @@ export function parseGeoJSONContent(
         name,
         description: cleanedDesc,
       });
+      const subType = resolveFarmSubType({
+        lat,
+        lng,
+        type: rawType,
+        name,
+        description: cleanedDesc,
+      });
       const status = detectFarmStatus(
         `${cleanedDesc} ${JSON.stringify(extendedData)}`
       );
 
       farms.push({
         id: buildStableFarmId('geojson', name, lat, lng, idx),
+        farmKey: getFarmKey(lat, lng),
         name,
         type: rawType,
         category,
+        subType,
         status,
         lat,
         lng,

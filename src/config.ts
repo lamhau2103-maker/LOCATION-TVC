@@ -218,6 +218,7 @@ export const APP_CONFIG = {
   adminSessionStorageKey: 'thaiviet_corp_admin_session_v1',
   userPrefsStorageKey: 'thaiviet_corp_user_prefs_v1',
   drivingDistancesStorageKey: 'thaiviet_corp_driving_distances_v1',
+  disinfectionRoutesStorageKey: 'thaiviet_corp_disinfection_routes_v1',
 
   // Danh sách từ khoá LOẠI TRỪ (không nối đường từ Nhà máy Trung tâm & không tự động gán icon Gà/Heo)
   arcExcludeKeywords: [
@@ -230,6 +231,7 @@ export const APP_CONFIG = {
     'tram rua',
     'sat khuan',
     'sat trung',
+    'khu trung',
     'nha may',
     'factory',
     'warehouse',
@@ -247,6 +249,11 @@ export const APP_CONFIG = {
     'pig farm',
     'poultry',
   ],
+};
+
+export const DEFAULT_DISINFECTION_ROUTE_COLORS = {
+  from: '#0EA5E9',
+  to: '#38BDF8',
 };
 
 /**
