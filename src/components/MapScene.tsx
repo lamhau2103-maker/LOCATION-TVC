@@ -128,6 +128,10 @@ const GLOBE_BUMP_TEXTURE_URL =
   'https://unpkg.com/three-globe/example/img/earth-topology.png';
 
 const BASEMAP_CANVAS_BG = MAP_TILE_PRELOAD_CONFIG.groundColorStreet;
+const CONTROL_TOWER_PIG_COLOR = '#E11D48';
+const CONTROL_TOWER_CHICKEN_COLOR = '#F59E0B';
+const CONTROL_TOWER_SPEED_KM_PER_SEC = 16;
+const ARRIVAL_RIPPLE_DURATION_MS = 760;
 
 try {
   if (typeof maplibregl.setWorkerUrl === 'function' && maplibreWorkerUrl) {
@@ -753,6 +757,7 @@ interface RipplePointItem {
   lng: number;
   lat: number;
   color: string;
+  isHub: boolean;
   isOther: boolean;
   sizePx: number;
 }
@@ -766,9 +771,10 @@ interface ArcGeometryItem {
   ctrlPt: [number, number];
   fullCoords: Array<[number, number]>;
   lineColor: string;
-  fromRgb: [number, number, number];
-  toRgb: [number, number, number];
-  phaseOffset: number;
+  dotRgb: [number, number, number];
+  transitMs: number;
+  cycleMs: number;
+  startDelayMs: number;
 }
 
 const FarmRipplesOverlay = React.memo(function FarmRipplesOverlay({
@@ -846,12 +852,20 @@ const FarmRipplesOverlay = React.memo(function FarmRipplesOverlay({
           >
             <div
               className={`farm-ripple-ring ${
-                item.isOther ? 'farm-ripple-ring--other' : ''
+                item.isHub
+                  ? 'farm-ripple-ring--hub'
+                  : item.isOther
+                  ? 'farm-ripple-ring--other'
+                  : ''
               }`}
             />
             <div
               className={`farm-ripple-ring farm-ripple-ring-delayed ${
-                item.isOther ? 'farm-ripple-ring--other' : ''
+                item.isHub
+                  ? 'farm-ripple-ring--hub'
+                  : item.isOther
+                  ? 'farm-ripple-ring--other'
+                  : ''
               }`}
             />
           </div>
@@ -2609,33 +2623,32 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
           if (hitId) return hitId;
         }
 
-        // Bổ sung nhận diện chạm/rê chuột trực tiếp lên chấm sáng đang chuyển động
+        // Bổ sung nhận diện chạm/rê chuột trực tiếp lên chấm tròn đang chuyển động
         const arcs = arcGeometriesRef.current;
         if (arcs.length === 0) return '';
         const nowMs = particlesTimeRef.current;
-        const cycleMs = 2400;
         let closestFarmId = '';
         let closestDistSq = 14 * 14;
 
         for (const arc of arcs) {
+          const phaseMs =
+            (((nowMs + arc.startDelayMs) % arc.cycleMs) + arc.cycleMs) %
+            arc.cycleMs;
+          if (phaseMs > arc.transitMs) continue;
+
+          const t = phaseMs / arc.transitMs;
+          const inv = 1 - t;
           const p0 = map.project([arc.hubLng, arc.hubLat]);
           const p1 = map.project(arc.ctrlPt);
           const p2 = map.project([arc.farmLng, arc.farmLat]);
-          for (let pIdx = 0; pIdx < 2; pIdx++) {
-            const t =
-              (((nowMs / cycleMs + arc.phaseOffset + pIdx * 0.5) % 1) + 1) % 1;
-            const inv = 1 - t;
-            const px =
-              inv * inv * p0.x + 2 * inv * t * p1.x + t * t * p2.x;
-            const py =
-              inv * inv * p0.y + 2 * inv * t * p1.y + t * t * p2.y;
-            const dx = px - point.x;
-            const dy = py - point.y;
-            const dSq = dx * dx + dy * dy;
-            if (dSq < closestDistSq) {
-              closestDistSq = dSq;
-              closestFarmId = arc.farm.id;
-            }
+          const px = inv * inv * p0.x + 2 * inv * t * p1.x + t * t * p2.x;
+          const py = inv * inv * p0.y + 2 * inv * t * p1.y + t * t * p2.y;
+          const dx = px - point.x;
+          const dy = py - point.y;
+          const dSq = dx * dx + dy * dy;
+          if (dSq < closestDistSq) {
+            closestDistSq = dSq;
+            closestFarmId = arc.farm.id;
           }
         }
         return closestFarmId;
@@ -2728,11 +2741,28 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
           (f) => f.id === farmId
         );
         if (matched) {
-          setHoveredArcId((prev) =>
-            prev === matched.id ? prev : matched.id
-          );
+          const hasSupplyRoute =
+            showFactoryArcsRef.current &&
+            arcGeometriesRef.current.some((a) => a.farm.id === matched.id);
+          setHoveredArcId((prev) => {
+            const next = hasSupplyRoute ? matched.id : null;
+            return prev === next ? prev : next;
+          });
           setHoveredId(matched.id);
-          if (map.getZoom() < 11) {
+
+          if (hasSupplyRoute) {
+            const projected = map.project([matched.lng, matched.lat]);
+            const badge = getLocationDisplayLabel(
+              matched,
+              latestStateRef.current.customLabels
+            );
+            setHoveredTooltip({
+              name: `Tuyến tới ${matched.name}`,
+              badge,
+              x: projected.x,
+              y: projected.y,
+            });
+          } else if (map.getZoom() < 11) {
             const projected = map.project([matched.lng, matched.lat]);
             const badge = getLocationDisplayLabel(
               matched,
@@ -3163,18 +3193,34 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
           ]);
         }
 
-        const fromColor =
-          farm.category === 'pig'
-            ? arcColors.pig.from
-            : farm.category === 'chicken'
-            ? arcColors.chicken.from
-            : getCategoryConfig(farm.category).hex;
+        let arcLengthKm = 0;
+        for (let s = 1; s < fullCoords.length; s++) {
+          arcLengthKm += calculateDistanceKm(
+            fullCoords[s - 1][1],
+            fullCoords[s - 1][0],
+            fullCoords[s][1],
+            fullCoords[s][0]
+          );
+        }
+
+        const transitMs = Math.max(
+          900,
+          Math.round((arcLengthKm / CONTROL_TOWER_SPEED_KM_PER_SEC) * 1000)
+        );
+        const cycleMs = Math.max(
+          3200,
+          transitMs + ARRIVAL_RIPPLE_DURATION_MS + 350
+        );
+        // Phân bổ lệch pha theo tỷ lệ vàng để các tuyến xuất phát tự nhiên, không phóng đồng loạt 40 chấm cùng lúc
+        const startDelayMs = Math.round(
+          ((idx * 0.38196601125) % 1) * cycleMs
+        );
 
         const lineColor =
           farm.category === 'pig'
-            ? arcColors.pig.to
+            ? CONTROL_TOWER_PIG_COLOR
             : farm.category === 'chicken'
-            ? arcColors.chicken.to
+            ? CONTROL_TOWER_CHICKEN_COLOR
             : getCategoryConfig(farm.category).hex;
 
         return {
@@ -3186,47 +3232,86 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
           ctrlPt,
           fullCoords,
           lineColor,
-          fromRgb: parseHexToRgb(fromColor),
-          toRgb: parseHexToRgb(lineColor),
-          phaseOffset: (idx * 0.137) % 1,
+          dotRgb: parseHexToRgb(lineColor),
+          transitMs,
+          cycleMs,
+          startDelayMs,
         };
       });
-    }, [activeTargetFarms, centralHub, arcColors]);
+    }, [activeTargetFarms, centralHub]);
 
     arcGeometriesRef.current = cachedArcGeometries;
 
-    const ripplePoints = useMemo(() => {
-      return visibleFarms.map((farm) => {
-        let coords: [number, number] = [Number(farm.lng), Number(farm.lat)];
-        if (Math.abs(coords[0]) < 30 && Math.abs(coords[1]) >= 30) {
-          coords = [coords[1], coords[0]];
-        }
-        const [lng, lat] = coords;
+    const ripplePoints = useMemo<RipplePointItem[]>(() => {
+      const items: RipplePointItem[] = [];
+      let hasHubPoint = false;
+
+      for (const farm of visibleFarms) {
         const isHub = Boolean(
           farm.isFeedMill ||
             farm.subType === 'hub' ||
             (centralHub?.id && farm.id === centralHub.id)
         );
-        const isOther =
-          isHub || (farm.category !== 'chicken' && farm.category !== 'pig');
+        if (isHub) hasHubPoint = true;
+
+        // Trại Gà & Trại Heo sẽ tạo vòng gợn sóng riêng đúng thời điểm chấm hàng tới đích;
+        // vòng CSS chỉ giữ cho radar của FEED FACTORY và các điểm nhóm Khác.
+        if (!isHub && (farm.category === 'chicken' || farm.category === 'pig')) {
+          continue;
+        }
+
+        let coords: [number, number] = [Number(farm.lng), Number(farm.lat)];
+        if (Math.abs(coords[0]) < 30 && Math.abs(coords[1]) >= 30) {
+          coords = [coords[1], coords[0]];
+        }
+        const [lng, lat] = coords;
         const color = isHub
           ? APP_CONFIG.colors.hubColor
-          : farm.category === 'pig'
-          ? arcColors.pig.to
-          : farm.category === 'chicken'
-          ? arcColors.chicken.to
           : getCategoryConfig(farm.category).hex;
 
-        return {
+        items.push({
           farm,
           lng,
           lat,
           color,
-          isOther,
-          sizePx: isOther ? 36 : 26,
-        };
-      });
-    }, [visibleFarms, centralHub, arcColors]);
+          isHub,
+          isOther: !isHub,
+          sizePx: isHub ? 52 : 34,
+        });
+      }
+
+      if (!hasHubPoint && centralHub) {
+        let hubCoords: [number, number] = [
+          Number(centralHub.lng),
+          Number(centralHub.lat),
+        ];
+        if (Math.abs(hubCoords[0]) < 30 && Math.abs(hubCoords[1]) >= 30) {
+          hubCoords = [hubCoords[1], hubCoords[0]];
+        }
+        items.push({
+          farm: {
+            id: centralHub.id || 'central-hub',
+            name: centralHub.name,
+            type: 'Nhà máy cám',
+            category: 'other',
+            subType: 'hub',
+            isFeedMill: true,
+            status: 'active',
+            lat: hubCoords[1],
+            lng: hubCoords[0],
+            description: centralHub.subtitle,
+          },
+          lng: hubCoords[0],
+          lat: hubCoords[1],
+          color: APP_CONFIG.colors.hubColor,
+          isHub: true,
+          isOther: false,
+          sizePx: 52,
+        });
+      }
+
+      return items;
+    }, [visibleFarms, centralHub]);
 
     ripplePointsRef.current = ripplePoints;
 
@@ -3258,8 +3343,9 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
 
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      ctx.clearRect(0, 0, vw, vh);
 
       const arcs = arcGeometriesRef.current;
       if (
@@ -3277,13 +3363,16 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         highlightedId !== null &&
         arcs.some((g) => g.farm.id === highlightedId);
 
-      const cycleMs = 2400;
-      const trailSpan = 0.11;
-      const trailSteps = 6;
+      const projectedArcs: Array<{
+        arc: ArcGeometryItem;
+        p0: maplibregl.Point;
+        p1: maplibregl.Point;
+        p2: maplibregl.Point;
+        isHighlighted: boolean;
+        isDimmed: boolean;
+      }> = [];
 
-      ctx.save();
-      ctx.lineCap = 'round';
-      ctx.lineJoin = 'round';
+      let highlightedItem: (typeof projectedArcs)[number] | null = null;
 
       for (const arc of arcs) {
         const p0 = map.project([arc.hubLng, arc.hubLat]);
@@ -3306,102 +3395,93 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         const isHighlighted =
           hasMultiHighlight && arc.farm.id === highlightedId;
         const isDimmed = hasMultiHighlight && !isHighlighted;
-        const baseAlpha = isDimmed ? 0.22 : isHighlighted ? 1.0 : 0.92;
-        const dotRadius = isHighlighted ? 3.8 : 2.9;
-        const glowRadius = isHighlighted ? 15 : 11;
-
-        for (let pIdx = 0; pIdx < 2; pIdx++) {
-          const rawT =
-            (((nowMs / cycleMs + arc.phaseOffset + pIdx * 0.5) % 1) + 1) % 1;
-          const edgeAlpha =
-            rawT < 0.08
-              ? rawT / 0.08
-              : rawT > 0.88
-              ? (1 - rawT) / 0.12
-              : 1;
-          const alpha = baseAlpha * edgeAlpha;
-          if (alpha <= 0.02) continue;
-
-          const r = Math.round(
-            arc.fromRgb[0] + (arc.toRgb[0] - arc.fromRgb[0]) * rawT
-          );
-          const g = Math.round(
-            arc.fromRgb[1] + (arc.toRgb[1] - arc.fromRgb[1]) * rawT
-          );
-          const b = Math.round(
-            arc.fromRgb[2] + (arc.toRgb[2] - arc.fromRgb[2]) * rawT
-          );
-
-          // Đuôi mờ ngắn phía sau chấm sáng (KHÔNG vẽ đường nối tĩnh)
-          const tailStartT = Math.max(0, rawT - trailSpan);
-          if (rawT > tailStartT + 0.005) {
-            for (let s = 0; s < trailSteps; s++) {
-              const f0 = s / trailSteps;
-              const f1 = (s + 1) / trailSteps;
-              const t0 = tailStartT + (rawT - tailStartT) * f0;
-              const t1 = tailStartT + (rawT - tailStartT) * f1;
-              const inv0 = 1 - t0;
-              const inv1 = 1 - t1;
-              const x0 =
-                inv0 * inv0 * p0.x + 2 * inv0 * t0 * p1.x + t0 * t0 * p2.x;
-              const y0 =
-                inv0 * inv0 * p0.y + 2 * inv0 * t0 * p1.y + t0 * t0 * p2.y;
-              const x1 =
-                inv1 * inv1 * p0.x + 2 * inv1 * t1 * p1.x + t1 * t1 * p2.x;
-              const y1 =
-                inv1 * inv1 * p0.y + 2 * inv1 * t1 * p1.y + t1 * t1 * p2.y;
-
-              const segFade = f1 * f1;
-              ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, ${(
-                alpha *
-                0.5 *
-                segFade
-              ).toFixed(3)})`;
-              ctx.lineWidth = Math.max(0.7, dotRadius * 1.15 * f1);
-              ctx.beginPath();
-              ctx.moveTo(x0, y0);
-              ctx.lineTo(x1, y1);
-              ctx.stroke();
-            }
-          }
-
-          const inv = 1 - rawT;
-          const x = inv * inv * p0.x + 2 * inv * rawT * p1.x + rawT * rawT * p2.x;
-          const y = inv * inv * p0.y + 2 * inv * rawT * p1.y + rawT * rawT * p2.y;
-
-          // Quầng sáng tỏa mềm xung quanh chấm sáng
-          const grad = ctx.createRadialGradient(x, y, 0, x, y, glowRadius);
-          grad.addColorStop(
-            0,
-            `rgba(255, 255, 255, ${Math.min(1, alpha * 0.95).toFixed(3)})`
-          );
-          grad.addColorStop(
-            0.3,
-            `rgba(${r}, ${g}, ${b}, ${(alpha * 0.78).toFixed(3)})`
-          );
-          grad.addColorStop(
-            0.68,
-            `rgba(${r}, ${g}, ${b}, ${(alpha * 0.24).toFixed(3)})`
-          );
-          grad.addColorStop(1, `rgba(${r}, ${g}, ${b}, 0)`);
-          ctx.fillStyle = grad;
-          ctx.beginPath();
-          ctx.arc(x, y, glowRadius, 0, Math.PI * 2);
-          ctx.fill();
-
-          // Nhân chấm sáng sắc nét
-          ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${Math.min(1, alpha).toFixed(
-            3
-          )})`;
-          ctx.beginPath();
-          ctx.arc(x, y, dotRadius, 0, Math.PI * 2);
-          ctx.fill();
-
-          ctx.fillStyle = `rgba(255, 255, 255, ${(alpha * 0.9).toFixed(3)})`;
-          ctx.beginPath();
-          ctx.arc(x, y, dotRadius * 0.48, 0, Math.PI * 2);
-          ctx.fill();
+        const entry = { arc, p0, p1, p2, isHighlighted, isDimmed };
+        if (isHighlighted) {
+          highlightedItem = entry;
+        } else {
+          projectedArcs.push(entry);
         }
+      }
+
+      if (highlightedItem) {
+        projectedArcs.push(highlightedItem);
+      }
+
+      ctx.save();
+
+      // 1. Vẽ đường dẫn Bezier mảnh (1px, opacity 0.18; hoặc 2px / 0.9 khi hover và 0.05 cho các tuyến còn lại)
+      for (const item of projectedArcs) {
+        const { arc, p0, p1, p2, isHighlighted, isDimmed } = item;
+        const [r, g, b] = arc.dotRgb;
+        const lineOpacity = isHighlighted ? 0.9 : isDimmed ? 0.05 : 0.18;
+
+        ctx.beginPath();
+        ctx.moveTo(p0.x, p0.y);
+        ctx.quadraticCurveTo(p1.x, p1.y, p2.x, p2.y);
+        ctx.lineWidth = isHighlighted ? 2 : 1;
+        ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, ${lineOpacity})`;
+        ctx.stroke();
+      }
+
+      // 2. Vẽ vòng gợn sóng tại chân icon trang trại đúng khoảnh khắc chấm hàng cập bến
+      for (const item of projectedArcs) {
+        const { arc, p2, isHighlighted, isDimmed } = item;
+        const phaseMs =
+          (((nowMs + arc.startDelayMs) % arc.cycleMs) + arc.cycleMs) %
+          arc.cycleMs;
+        if (phaseMs < arc.transitMs) continue;
+
+        const rippleElapsed = phaseMs - arc.transitMs;
+        if (rippleElapsed >= ARRIVAL_RIPPLE_DURATION_MS) continue;
+
+        const rp = rippleElapsed / ARRIVAL_RIPPLE_DURATION_MS;
+        const easeOut = 1 - Math.pow(1 - rp, 2.2);
+        const ringRadius = 4 + easeOut * (isHighlighted ? 20 : 16);
+        const ringAlpha =
+          (isDimmed ? 0.16 : isHighlighted ? 0.85 : 0.68) *
+          Math.pow(1 - rp, 1.5);
+        if (ringAlpha <= 0.02) continue;
+
+        const [r, g, b] = arc.dotRgb;
+        ctx.beginPath();
+        ctx.arc(p2.x, p2.y, ringRadius, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${(ringAlpha * 0.14).toFixed(
+          3
+        )})`;
+        ctx.fill();
+        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, ${ringAlpha.toFixed(3)})`;
+        ctx.stroke();
+      }
+
+      // 3. Vẽ chấm tròn sắc nét (radius 3.5px, viền trắng 1.5px) chạy tốc độ địa lý đều đặn từ FEED FACTORY ➔ Trại
+      ctx.lineWidth = 1.5;
+      for (const item of projectedArcs) {
+        const { arc, p0, p1, p2, isHighlighted, isDimmed } = item;
+        const phaseMs =
+          (((nowMs + arc.startDelayMs) % arc.cycleMs) + arc.cycleMs) %
+          arc.cycleMs;
+        if (phaseMs > arc.transitMs) continue;
+
+        const rawT = phaseMs / arc.transitMs;
+        const inv = 1 - rawT;
+        const x = inv * inv * p0.x + 2 * inv * rawT * p1.x + rawT * rawT * p2.x;
+        const y = inv * inv * p0.y + 2 * inv * rawT * p1.y + rawT * rawT * p2.y;
+
+        const dotRadius = isHighlighted ? 4 : 3.5;
+        const [r, g, b] = arc.dotRgb;
+        const dotAlpha = isDimmed ? 0.18 : 1;
+
+        ctx.beginPath();
+        ctx.arc(x, y, dotRadius, 0, Math.PI * 2);
+        ctx.fillStyle =
+          dotAlpha >= 1
+            ? arc.lineColor
+            : `rgba(${r}, ${g}, ${b}, ${dotAlpha})`;
+        ctx.fill();
+        ctx.strokeStyle =
+          dotAlpha >= 1 ? '#FFFFFF' : `rgba(255, 255, 255, ${dotAlpha})`;
+        ctx.stroke();
       }
 
       ctx.restore();
