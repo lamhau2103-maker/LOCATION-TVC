@@ -11,6 +11,7 @@ import {
   GitCommitHorizontal,
   Lock,
   MapPin,
+  Maximize2,
   Navigation,
   Pencil,
   Radio,
@@ -25,7 +26,11 @@ import {
 import {
   APP_CONFIG,
   DEFAULT_DISINFECTION_ROUTE_COLORS,
+  DEFAULT_MARKER_SCALE_PERCENT,
   getCategoryConfig,
+  MARKER_SCALE_PRESETS,
+  MAX_MARKER_SCALE_PERCENT,
+  MIN_MARKER_SCALE_PERCENT,
   PRESET_LOCATION_LABELS,
   RESPONSIVE_BREAKPOINTS,
 } from '../config';
@@ -39,6 +44,7 @@ import {
   FarmCategory,
   FarmCustomLabels,
   IconChoice,
+  MarkerScalesMap,
 } from '../types';
 import {
   formatDrivingDistanceKm,
@@ -118,7 +124,216 @@ interface FarmDetailCardProps {
   onPreviewDisinfectionRoute?: (
     preview: { farmKey: string; config: DisinfectionRouteConfig } | null
   ) => void;
+  markerScales?: MarkerScalesMap;
+  onSaveMarkerScale?: (farmKey: string, scalePercent: number) => Promise<void>;
+  onPreviewMarkerScale?: (
+    preview: { farmKey: string; scale: number } | null
+  ) => void;
 }
+
+interface MarkerScaleControlProps {
+  farmKey: string;
+  savedScalePercent: number;
+  onSave: (farmKey: string, scalePercent: number) => Promise<void>;
+  onPreview?: (preview: { farmKey: string; scale: number } | null) => void;
+}
+
+const MarkerScaleControl: React.FC<MarkerScaleControlProps> = ({
+  farmKey,
+  savedScalePercent,
+  onSave,
+  onPreview,
+}) => {
+  const [draftScale, setDraftScale] = useState<number>(savedScalePercent);
+  const [inputText, setInputText] = useState<string>(String(savedScalePercent));
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState('');
+
+  useEffect(() => {
+    setDraftScale(savedScalePercent);
+    setInputText(String(savedScalePercent));
+    setSaveError('');
+  }, [farmKey, savedScalePercent]);
+
+  useEffect(() => {
+    return () => {
+      onPreview?.(null);
+    };
+  }, [farmKey, onPreview]);
+
+  const applyScale = (rawValue: number) => {
+    const clamped = Math.max(
+      MIN_MARKER_SCALE_PERCENT,
+      Math.min(MAX_MARKER_SCALE_PERCENT, Math.round(rawValue))
+    );
+    setDraftScale(clamped);
+    setInputText(String(clamped));
+    setSaveError('');
+    onPreview?.({ farmKey, scale: clamped });
+  };
+
+  const handleNumberInputChange = (raw: string) => {
+    const digitsOnly = raw.replace(/[^0-9]/g, '');
+    setInputText(digitsOnly);
+    setSaveError('');
+    if (!digitsOnly) return;
+    const parsed = Number(digitsOnly);
+    if (
+      Number.isFinite(parsed) &&
+      parsed >= MIN_MARKER_SCALE_PERCENT &&
+      parsed <= MAX_MARKER_SCALE_PERCENT
+    ) {
+      const rounded = Math.round(parsed);
+      setDraftScale(rounded);
+      onPreview?.({ farmKey, scale: rounded });
+    }
+  };
+
+  const handleNumberBlur = () => {
+    const parsed = Number(inputText);
+    if (!inputText || !Number.isFinite(parsed)) {
+      applyScale(draftScale);
+      return;
+    }
+    applyScale(parsed);
+  };
+
+  const isDirty = draftScale !== savedScalePercent;
+
+  return (
+    <div className="mb-3.5 rounded-2xl border border-[#2b8fd0]/30 bg-gradient-to-br from-sky-50/90 via-white to-emerald-50/60 p-3 text-xs">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1.5 text-[11px] font-extrabold tracking-wide text-[#2b8fd0]">
+          <Maximize2 className="h-3.5 w-3.5 shrink-0" />
+          <span>KÍCH THƯỚC BIỂU TƯỢNG (%)</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          {isDirty && (
+            <span className="animate-pulse text-[10px] font-extrabold text-amber-600">
+              Chưa lưu
+            </span>
+          )}
+          <div className="flex items-center rounded-xl border border-[#2b8fd0]/30 bg-white px-2 py-0.5 shadow-2xs">
+            <input
+              type="text"
+              inputMode="numeric"
+              aria-label="Kích thước biểu tượng phần trăm"
+              value={inputText}
+              onChange={(e) => handleNumberInputChange(e.target.value)}
+              onBlur={handleNumberBlur}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  handleNumberBlur();
+                }
+              }}
+              className="font-mono-tabular w-10 bg-transparent text-right text-xs font-extrabold text-[#0f2a24] focus:outline-none"
+            />
+            <span className="ml-0.5 text-[11px] font-extrabold text-[#2b8fd0]">
+              %
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <div className="mb-2.5 flex items-center gap-2">
+        <span className="font-mono-tabular text-[10px] font-bold text-emerald-950/55">
+          {MIN_MARKER_SCALE_PERCENT}%
+        </span>
+        <input
+          type="range"
+          min={MIN_MARKER_SCALE_PERCENT}
+          max={MAX_MARKER_SCALE_PERCENT}
+          step={5}
+          value={draftScale}
+          onChange={(e) => applyScale(Number(e.target.value))}
+          aria-label="Thanh trượt kích thước biểu tượng"
+          className="h-2 w-full cursor-pointer accent-[#2b8fd0]"
+        />
+        <span className="font-mono-tabular text-[10px] font-bold text-emerald-950/55">
+          {MAX_MARKER_SCALE_PERCENT}%
+        </span>
+      </div>
+
+      <div className="mb-2.5 flex flex-wrap gap-1.5">
+        {MARKER_SCALE_PRESETS.map((preset) => {
+          const isSelected = draftScale === preset;
+          return (
+            <button
+              key={preset}
+              type="button"
+              onClick={() => applyScale(preset)}
+              className={`rounded-lg border px-2 py-1 text-[10.5px] font-extrabold transition-colors cursor-pointer ${
+                isSelected
+                  ? 'border-[#2b8fd0] bg-[#2b8fd0] text-white shadow-2xs'
+                  : 'border-emerald-950/15 bg-white text-[#0f2a24] hover:border-[#2b8fd0]'
+              }`}
+            >
+              {preset === DEFAULT_MARKER_SCALE_PERCENT
+                ? `${preset}% (Mặc định)`
+                : `${preset}%`}
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="flex items-center justify-end gap-2">
+        {isDirty && (
+          <button
+            type="button"
+            disabled={isSaving}
+            onClick={() => {
+              setDraftScale(savedScalePercent);
+              setInputText(String(savedScalePercent));
+              setSaveError('');
+              onPreview?.(null);
+            }}
+            className="rounded-lg bg-emerald-950/10 px-2.5 py-1.5 text-[11px] font-bold text-[#0f2a24] hover:bg-emerald-950/15 cursor-pointer"
+          >
+            Huỷ
+          </button>
+        )}
+        <button
+          type="button"
+          disabled={isSaving}
+          onClick={async () => {
+            const parsed = Number(inputText);
+            const targetScale = Number.isFinite(parsed)
+              ? Math.max(
+                  MIN_MARKER_SCALE_PERCENT,
+                  Math.min(MAX_MARKER_SCALE_PERCENT, Math.round(parsed))
+                )
+              : draftScale;
+            setDraftScale(targetScale);
+            setInputText(String(targetScale));
+            setIsSaving(true);
+            setSaveError('');
+            try {
+              await onSave(farmKey, targetScale);
+            } catch (err) {
+              setSaveError(
+                err instanceof Error
+                  ? err.message
+                  : 'Không thể lưu kích thước biểu tượng lên Upstash.'
+              );
+            } finally {
+              setIsSaving(false);
+            }
+          }}
+          className="rounded-lg bg-[#2b8fd0] px-3.5 py-1.5 text-[11px] font-extrabold text-white shadow-xs hover:bg-[#1e74ad] disabled:opacity-60 cursor-pointer"
+        >
+          {isSaving ? 'Đang lưu...' : 'Lưu kích thước lên Upstash'}
+        </button>
+      </div>
+
+      {saveError && (
+        <div className="mt-1.5 text-[10px] font-bold text-rose-600">
+          {saveError}
+        </div>
+      )}
+    </div>
+  );
+};
 
 function useDeviceCardMode() {
   const resolveMode = () => {
@@ -188,6 +403,9 @@ export const FarmDetailCard: React.FC<FarmDetailCardProps> = ({
   disinfectionRoutes,
   onSaveDisinfectionRoute,
   onPreviewDisinfectionRoute,
+  markerScales,
+  onSaveMarkerScale,
+  onPreviewMarkerScale,
 }) => {
   const [tilt, setTilt] = useState({ rotateX: 0, rotateY: 0 });
   const [copied, setCopied] = useState(false);
@@ -1252,6 +1470,18 @@ export const FarmDetailCard: React.FC<FarmDetailCardProps> = ({
                 </div>
               )}
 
+            {/* Khối chỉnh sửa Kích thước biểu tượng (%) dành riêng cho Quản trị viên */}
+            {isAdmin && onSaveMarkerScale && (
+              <MarkerScaleControl
+                farmKey={farmKey}
+                savedScalePercent={
+                  markerScales?.[farmKey] ?? DEFAULT_MARKER_SCALE_PERCENT
+                }
+                onSave={onSaveMarkerScale}
+                onPreview={onPreviewMarkerScale}
+              />
+            )}
+
             {/* Mô tả chi tiết */}
             {farm.description && (
               <p className="mb-3.5 break-words whitespace-pre-line text-xs font-medium leading-relaxed text-[#0f2a24]/80 sm:text-sm">
@@ -1494,6 +1724,11 @@ interface HubDetailCardProps {
   onChangeMobileSheetSnap?: (snap: MobileSheetSnap) => void;
   drivingDistanceCache?: DrivingDistanceCache;
   isCalculatingDistances?: boolean;
+  markerScales?: MarkerScalesMap;
+  onSaveMarkerScale?: (farmKey: string, scalePercent: number) => Promise<void>;
+  onPreviewMarkerScale?: (
+    preview: { farmKey: string; scale: number } | null
+  ) => void;
 }
 
 /**
@@ -1521,6 +1756,9 @@ export const HubDetailCard: React.FC<HubDetailCardProps> = ({
   onChangeMobileSheetSnap,
   drivingDistanceCache,
   isCalculatingDistances = false,
+  markerScales,
+  onSaveMarkerScale,
+  onPreviewMarkerScale,
 }) => {
   const [copied, setCopied] = useState(false);
   const [logoError, setLogoError] = useState(false);
@@ -2129,6 +2367,23 @@ export const HubDetailCard: React.FC<HubDetailCardProps> = ({
         {/* Nội dung cuộn dọc */}
         {!isCollapsedMobile && (
           <div className="relative z-10 flex-1 overflow-y-auto px-4 py-3.5 sm:px-5">
+            {isAdmin && onSaveMarkerScale && (
+              <MarkerScaleControl
+                farmKey={
+                  centralHub.farmKey ||
+                  getFarmKey(centralHub.lat, centralHub.lng)
+                }
+                savedScalePercent={
+                  markerScales?.[
+                    centralHub.farmKey ||
+                      getFarmKey(centralHub.lat, centralHub.lng)
+                  ] ?? DEFAULT_MARKER_SCALE_PERCENT
+                }
+                onSave={onSaveMarkerScale}
+                onPreview={onPreviewMarkerScale}
+              />
+            )}
+
             {centralHub.address && (
               <p className="mb-3 break-words text-xs font-semibold text-[#0f2a24]/80">
                 Địa chỉ: {centralHub.address}

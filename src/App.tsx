@@ -12,7 +12,14 @@ import React, {
 } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { CheckCircle2, Sparkles } from 'lucide-react';
-import { APP_CONFIG, OPEN_FACTORY_CARD_ON_ENTER, getAutoTimeOfDay } from './config';
+import {
+  APP_CONFIG,
+  DEFAULT_MARKER_SCALE_PERCENT,
+  MAX_MARKER_SCALE_PERCENT,
+  MIN_MARKER_SCALE_PERCENT,
+  OPEN_FACTORY_CARD_ON_ENTER,
+  getAutoTimeOfDay,
+} from './config';
 import defaultFarmsData from './data/farms.json';
 import {
   AppStage,
@@ -27,6 +34,7 @@ import {
   FarmIconOverrides,
   IconChoice,
   MapStyleMode,
+  MarkerScalesMap,
   ParseResult,
   SyncState,
   TimeOfDay,
@@ -484,6 +492,56 @@ export default function App() {
     };
   }, [disinfectionRoutes, previewDisinfectionRoute]);
 
+  // 4b-5. Kích thước biểu tượng tùy chỉnh theo từng địa điểm (50% - 250%, mặc định 100%) đồng bộ từ Upstash Redis
+  const [markerScales, setMarkerScales] = useState<MarkerScalesMap>(() => {
+    try {
+      const saved = localStorage.getItem(APP_CONFIG.markerScalesStorageKey);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === 'object') {
+          const cleaned: MarkerScalesMap = {};
+          for (const [k, v] of Object.entries(parsed)) {
+            const num = Math.round(Number(v));
+            if (
+              k &&
+              Number.isFinite(num) &&
+              num >= MIN_MARKER_SCALE_PERCENT &&
+              num <= MAX_MARKER_SCALE_PERCENT &&
+              num !== DEFAULT_MARKER_SCALE_PERCENT
+            ) {
+              cleaned[k] = num;
+            }
+          }
+          return cleaned;
+        }
+      }
+    } catch {
+      // ignore
+    }
+    return {};
+  });
+  const [previewMarkerScale, setPreviewMarkerScale] = useState<{
+    farmKey: string;
+    scale: number;
+  } | null>(null);
+
+  const effectiveMarkerScales = useMemo<MarkerScalesMap>(() => {
+    if (!previewMarkerScale) return markerScales;
+    const clamped = Math.max(
+      MIN_MARKER_SCALE_PERCENT,
+      Math.min(MAX_MARKER_SCALE_PERCENT, Math.round(previewMarkerScale.scale))
+    );
+    if (clamped === DEFAULT_MARKER_SCALE_PERCENT) {
+      const next = { ...markerScales };
+      delete next[previewMarkerScale.farmKey];
+      return next;
+    }
+    return {
+      ...markerScales,
+      [previewMarkerScale.farmKey]: clamped,
+    };
+  }, [markerScales, previewMarkerScale]);
+
   const [isServerIconConnected, setIsServerIconConnected] =
     useState<boolean>(true);
   const [bouncingFarmId, setBouncingFarmId] = useState<string | null>(null);
@@ -924,6 +982,7 @@ export default function App() {
             customLabels?: Record<string, string>;
             arcColors?: ArcColorConfig;
             disinfectionRoutes?: DisinfectionRoutesMap;
+            markerScales?: Record<string, number>;
             items?: Array<{ farm_key?: string; icon?: string }>;
           }
         | Array<{ farm_key?: string; icon?: string }>;
@@ -1032,6 +1091,31 @@ export default function App() {
             localStorage.setItem(
               APP_CONFIG.disinfectionRoutesStorageKey,
               JSON.stringify(cleanedDisinfection)
+            );
+          } catch {
+            // ignore
+          }
+        }
+
+        if (data.markerScales && typeof data.markerScales === 'object') {
+          const cleanedScales: MarkerScalesMap = {};
+          for (const [k, v] of Object.entries(data.markerScales)) {
+            const num = Math.round(Number(v));
+            if (
+              k &&
+              Number.isFinite(num) &&
+              num >= MIN_MARKER_SCALE_PERCENT &&
+              num <= MAX_MARKER_SCALE_PERCENT &&
+              num !== DEFAULT_MARKER_SCALE_PERCENT
+            ) {
+              cleanedScales[k] = num;
+            }
+          }
+          setMarkerScales(cleanedScales);
+          try {
+            localStorage.setItem(
+              APP_CONFIG.markerScalesStorageKey,
+              JSON.stringify(cleanedScales)
             );
           } catch {
             // ignore
@@ -1495,6 +1579,87 @@ export default function App() {
     [adminPassword, disinfectionRoutes, soundEnabled]
   );
 
+  const handleSaveMarkerScale = useCallback(
+    async (farmKey: string, scalePercent: number) => {
+      const clamped = Math.max(
+        MIN_MARKER_SCALE_PERCENT,
+        Math.min(MAX_MARKER_SCALE_PERCENT, Math.round(scalePercent))
+      );
+
+      const res = await fetch('/api/icons', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-admin-password': adminPassword,
+          Accept: 'application/json',
+        },
+        body: JSON.stringify({
+          markerScale: {
+            farm_key: farmKey,
+            scale: clamped,
+          },
+        }),
+      });
+
+      const contentType = res.headers.get('content-type') || '';
+      const isJson = contentType.includes('application/json');
+      const data = isJson ? await res.json() : {};
+
+      if (res.status === 401) {
+        throw new Error(data.error || 'Sai mật khẩu quản trị.');
+      }
+
+      const nextMap: MarkerScalesMap = { ...markerScales };
+      if (clamped === DEFAULT_MARKER_SCALE_PERCENT) {
+        delete nextMap[farmKey];
+      } else {
+        nextMap[farmKey] = clamped;
+      }
+
+      if (res.ok && isJson) {
+        setMarkerScales(nextMap);
+        setPreviewMarkerScale(null);
+        setIsServerIconConnected(true);
+        try {
+          localStorage.setItem(
+            APP_CONFIG.markerScalesStorageKey,
+            JSON.stringify(nextMap)
+          );
+        } catch {
+          // ignore
+        }
+        soundEngine.playScanSuccess(soundEnabled);
+        setToastMessage(
+          clamped === DEFAULT_MARKER_SCALE_PERCENT
+            ? 'Đã khôi phục kích thước biểu tượng mặc định (100%) trên Upstash!'
+            : `Đã lưu kích thước biểu tượng ${clamped}% lên Upstash!`
+        );
+        return;
+      }
+
+      if (res.status === 503 || !isJson) {
+        setMarkerScales(nextMap);
+        setPreviewMarkerScale(null);
+        setIsServerIconConnected(false);
+        try {
+          localStorage.setItem(
+            APP_CONFIG.markerScalesStorageKey,
+            JSON.stringify(nextMap)
+          );
+        } catch {
+          // ignore
+        }
+        setToastMessage('Chưa kết nối máy chủ: kích thước chỉ lưu trên máy này');
+        return;
+      }
+
+      throw new Error(
+        data.error || 'Không thể lưu kích thước biểu tượng lên Upstash.'
+      );
+    },
+    [adminPassword, markerScales, soundEnabled]
+  );
+
   /**
    * Quản trị viên chỉnh sửa nhãn mô tả hiển thị (Trụ sở chính, Văn phòng, Nhà máy cám, Kho trung tâm, Trại heo, Trại gà...)
    * Lưu vào Upstash Redis (hash `farm_labels`) qua POST /api/icons để mọi người dùng đều nhìn thấy ngay.
@@ -1949,6 +2114,7 @@ export default function App() {
         farms={farms}
         arcColors={effectiveArcColors}
         disinfectionRoutes={effectiveDisinfectionRoutes}
+        markerScales={effectiveMarkerScales}
         newlyAddedIds={newlyAddedIds}
         removingFarms={removingFarms}
         bouncingFarmId={bouncingFarmId}
@@ -2076,6 +2242,9 @@ export default function App() {
             disinfectionRoutes={disinfectionRoutes}
             onSaveDisinfectionRoute={handleSaveDisinfectionRoute}
             onPreviewDisinfectionRoute={setPreviewDisinfectionRoute}
+            markerScales={markerScales}
+            onSaveMarkerScale={handleSaveMarkerScale}
+            onPreviewMarkerScale={setPreviewMarkerScale}
           />
         )}
       </AnimatePresence>
@@ -2102,6 +2271,9 @@ export default function App() {
             onChangeMobileSheetSnap={setMobileSheetSnap}
             drivingDistanceCache={drivingDistanceCache}
             isCalculatingDistances={isCalculatingDistances}
+            markerScales={markerScales}
+            onSaveMarkerScale={handleSaveMarkerScale}
+            onPreviewMarkerScale={setPreviewMarkerScale}
           />
         )}
       </AnimatePresence>

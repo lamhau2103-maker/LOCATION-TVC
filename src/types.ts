@@ -119,3 +119,6 @@ export interface DisinfectionRouteConfig {
 
 export type DisinfectionRoutesMap = Record<string, DisinfectionRouteConfig>;
 
+export type MarkerScalesMap = Record<string, number>;
+
+

@@ -35,6 +35,7 @@ import {
   FarmCustomLabels,
   FarmSubType,
   MapStyleMode,
+  MarkerScalesMap,
   PositionDiagnosticItem,
   TimeOfDay,
 } from '../types';
@@ -93,6 +94,7 @@ interface MapSceneProps {
   onSatelliteFallbackToStreet?: () => void;
   arcColors: ArcColorConfig;
   disinfectionRoutes?: DisinfectionRoutesMap;
+  markerScales?: MarkerScalesMap;
 }
 
 const OPENFREEMAP_GLYPHS_URL =
@@ -676,6 +678,7 @@ const SpaceOceanBackdrop: React.FC<{
 
 interface GlobeCustomPinDatum {
   id: string;
+  farmKey: string;
   name: string;
   lat: number;
   lng: number;
@@ -941,6 +944,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
       onSatelliteFallbackToStreet,
       arcColors,
       disinfectionRoutes = {},
+      markerScales = {},
     },
     ref
   ) => {
@@ -1024,6 +1028,12 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
       disinfectionRoutesRef.current = disinfectionRoutes;
       drawParticlesFrameRef.current();
     }, [disinfectionRoutes]);
+
+    const markerScalesRef = useRef<MarkerScalesMap>(markerScales);
+
+    useEffect(() => {
+      markerScalesRef.current = markerScales;
+    }, [markerScales]);
 
     const rippleLayerRef = useRef<HTMLDivElement | null>(null);
     const farmRippleRefs = useRef<Map<string, HTMLDivElement>>(new Map());
@@ -1199,6 +1209,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
 
         items.push({
           id: f.id,
+          farmKey: f.farmKey || getFarmKey(exactLat, exactLng),
           name: f.name,
           lat: exactLat,
           lng: exactLng,
@@ -1752,7 +1763,11 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
               sprite as THREE.Sprite & { __pinData?: GlobeCustomPinDatum }
             ).__pinData;
             const mult = pin?.isHub ? 1.24 : pin?.isSelected ? 1.22 : 1.0;
-            const s = baseScale * mult;
+            const customScalePct = pin?.farmKey
+              ? markerScalesRef.current[pin.farmKey] ?? 100
+              : 100;
+            const customScale = Math.max(0.5, Math.min(2.5, customScalePct / 100));
+            const s = baseScale * mult * customScale;
             sprite.scale.set(s, s, 1);
           });
         }
@@ -1826,7 +1841,8 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         allFarms: Farm[],
         hub: CentralHub | null,
         cats: Record<FarmCategory, boolean>,
-        labels?: FarmCustomLabels
+        labels?: FarmCustomLabels,
+        scales?: MarkerScalesMap
       ) => {
         renderedCoordsMapRef.current.clear();
 
@@ -1870,11 +1886,24 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
             : 'marker-other';
           const catColor = isHub ? '#2b8fd0' : getCategoryConfig(f.category).hex;
           const displayLabel = getLocationDisplayLabel(f, labels);
+          const fKey = f.farmKey || getFarmKey(exactLat, exactLng);
+          const rawScalePct = scales?.[fKey] ?? 100;
+          const scaleFactor = Math.max(0.5, Math.min(2.5, rawScalePct / 100));
+          const labelOffset: [number, number] = isHub
+            ? [
+                Number((1.6 * scaleFactor).toFixed(2)),
+                Number((-1.3 * scaleFactor).toFixed(2)),
+              ]
+            : [
+                0,
+                Number((0.4 + Math.max(0, scaleFactor - 1) * 0.25).toFixed(2)),
+              ];
 
           const feature = {
             type: 'Feature' as const,
             properties: {
               id: f.id,
+              farmKey: fKey,
               name: f.name,
               displayLabel,
               category: isHub ? 'hub' : f.category,
@@ -1884,6 +1913,8 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
               selectedIconImage: selectedIconKey,
               markerIcon: markerAlias,
               color: catColor,
+              markerScale: scaleFactor,
+              labelOffset,
               lat: exactLat,
               lng: exactLng,
             },
@@ -1919,7 +1950,8 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         curSelected: Farm | null,
         curHubSelected: boolean,
         curHub: CentralHub | null,
-        labels?: FarmCustomLabels
+        labels?: FarmCustomLabels,
+        scales?: MarkerScalesMap
       ) => {
         const selectedFarmFeatures: Array<{
           type: 'Feature';
@@ -1952,18 +1984,23 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
           const catColor = isHub
             ? '#facc15'
             : getCategoryConfig(curSelected.category).hex;
+          const fKey = curSelected.farmKey || getFarmKey(exactLat, exactLng);
+          const rawScalePct = scales?.[fKey] ?? 100;
+          const scaleFactor = Math.max(0.5, Math.min(2.5, rawScalePct / 100));
 
           if (!isHub) {
             selectedFarmFeatures.push({
               type: 'Feature',
               properties: {
                 id: curSelected.id,
+                farmKey: fKey,
                 name: curSelected.name,
                 displayLabel: getLocationDisplayLabel(curSelected, labels),
                 category: curSelected.category,
                 isHub: false,
                 selectedIconImage: `farm-icon-${resolvedSub}-selected`,
                 color: catColor,
+                markerScale: scaleFactor,
                 lat: exactLat,
                 lng: exactLng,
               },
@@ -2104,21 +2141,53 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
               ['linear'],
               ['zoom'],
               2,
-              0.34 * deviceFactor * hubScaleMult,
+              [
+                '*',
+                ['coalesce', ['get', 'markerScale'], 1],
+                0.34 * deviceFactor * hubScaleMult,
+              ],
               6,
-              0.4 * deviceFactor * hubScaleMult,
+              [
+                '*',
+                ['coalesce', ['get', 'markerScale'], 1],
+                0.4 * deviceFactor * hubScaleMult,
+              ],
               8,
-              0.45 * deviceFactor * hubScaleMult,
+              [
+                '*',
+                ['coalesce', ['get', 'markerScale'], 1],
+                0.45 * deviceFactor * hubScaleMult,
+              ],
               10,
-              0.56 * deviceFactor * hubScaleMult,
+              [
+                '*',
+                ['coalesce', ['get', 'markerScale'], 1],
+                0.56 * deviceFactor * hubScaleMult,
+              ],
               12,
-              0.68 * deviceFactor * hubScaleMult,
+              [
+                '*',
+                ['coalesce', ['get', 'markerScale'], 1],
+                0.68 * deviceFactor * hubScaleMult,
+              ],
               14,
-              0.78 * deviceFactor * hubScaleMult,
+              [
+                '*',
+                ['coalesce', ['get', 'markerScale'], 1],
+                0.78 * deviceFactor * hubScaleMult,
+              ],
               16,
-              0.86 * deviceFactor * hubScaleMult,
+              [
+                '*',
+                ['coalesce', ['get', 'markerScale'], 1],
+                0.86 * deviceFactor * hubScaleMult,
+              ],
               19,
-              0.9 * deviceFactor * hubScaleMult,
+              [
+                '*',
+                ['coalesce', ['get', 'markerScale'], 1],
+                0.9 * deviceFactor * hubScaleMult,
+              ],
             ]);
             map.setLayoutProperty(
               'hub-icon',
@@ -2260,13 +2329,15 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
           allFarms,
           curHub,
           curCats,
-          curLabels
+          curLabels,
+          markerScalesRef.current
         );
         const { selectedCollection, pulseCollection } = buildSelectedPinGeoJSON(
           curSelected,
           curHubSelected,
           curHub,
-          curLabels
+          curLabels,
+          markerScalesRef.current
         );
 
         if (!map.getSource('farms')) {
@@ -2365,21 +2436,53 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
           ['linear'],
           ['zoom'],
           2,
-          0.34 * deviceFactor * mult,
+          [
+            '*',
+            ['coalesce', ['get', 'markerScale'], 1],
+            0.34 * deviceFactor * mult,
+          ],
           6,
-          0.4 * deviceFactor * mult,
+          [
+            '*',
+            ['coalesce', ['get', 'markerScale'], 1],
+            0.4 * deviceFactor * mult,
+          ],
           8,
-          0.45 * deviceFactor * mult,
+          [
+            '*',
+            ['coalesce', ['get', 'markerScale'], 1],
+            0.45 * deviceFactor * mult,
+          ],
           10,
-          0.56 * deviceFactor * mult,
+          [
+            '*',
+            ['coalesce', ['get', 'markerScale'], 1],
+            0.56 * deviceFactor * mult,
+          ],
           12,
-          0.68 * deviceFactor * mult,
+          [
+            '*',
+            ['coalesce', ['get', 'markerScale'], 1],
+            0.68 * deviceFactor * mult,
+          ],
           14,
-          0.78 * deviceFactor * mult,
+          [
+            '*',
+            ['coalesce', ['get', 'markerScale'], 1],
+            0.78 * deviceFactor * mult,
+          ],
           16,
-          0.86 * deviceFactor * mult,
+          [
+            '*',
+            ['coalesce', ['get', 'markerScale'], 1],
+            0.86 * deviceFactor * mult,
+          ],
           19,
-          0.9 * deviceFactor * mult,
+          [
+            '*',
+            ['coalesce', ['get', 'markerScale'], 1],
+            0.9 * deviceFactor * mult,
+          ],
         ];
 
         // Layer tên trại dưới chân ghim khi phóng gần (zoom >= 11)
@@ -2402,7 +2505,11 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
                 12.5,
               ],
               'text-anchor': 'top',
-              'text-offset': [0, 0.4],
+              'text-offset': [
+                'coalesce',
+                ['get', 'labelOffset'],
+                ['literal', [0, 0.4]],
+              ],
               'text-max-width': 14,
               'text-optional': true,
               'text-allow-overlap': false,
@@ -2497,7 +2604,11 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
               'text-font': ['Noto Sans Regular'],
               'text-size': 12,
               'text-anchor': 'left',
-              'text-offset': [1.6, -1.3],
+              'text-offset': [
+                'coalesce',
+                ['get', 'labelOffset'],
+                ['literal', [1.6, -1.3]],
+              ],
               'text-optional': true,
               'text-allow-overlap': false,
             },
@@ -3289,7 +3400,8 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         farms,
         centralHub,
         activeCategories,
-        customLabels
+        customLabels,
+        markerScales
       );
       (
         map.getSource('farms') as maplibregl.GeoJSONSource | undefined
@@ -3302,6 +3414,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
       centralHub,
       activeCategories,
       customLabels,
+      markerScales,
       buildFarmsSourceGeoJSON,
     ]);
 
@@ -3314,7 +3427,8 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         selectedFarm,
         isHubSelected,
         centralHub,
-        customLabels
+        customLabels,
+        markerScales
       );
       (
         map.getSource('selected-pin-source') as
@@ -3331,6 +3445,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
       isHubSelected,
       centralHub,
       customLabels,
+      markerScales,
       buildSelectedPinGeoJSON,
     ]);
 

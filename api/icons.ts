@@ -12,6 +12,7 @@
 const REDIS_HASH_KEY = 'farm_icons';
 const REDIS_LABELS_HASH_KEY = 'farm_labels';
 const REDIS_DISINFECTION_HASH_KEY = 'disinfection_routes';
+const REDIS_SCALES_HASH_KEY = 'marker_scales';
 const FARM_KEY_REGEX = /^-?\d{1,2}\.\d{5},-?\d{1,3}\.\d{5}$/;
 const HEX_COLOR_REGEX = /^#[0-9a-fA-F]{6}$/;
 
@@ -47,42 +48,53 @@ export default async function handler(req: any, res: any) {
     }
 
     try {
-      const [iconsRes, labelsRes, arcColorsRes, disinfectionRes] = await Promise.all([
-        fetch(`${redisUrl}/hgetall/${encodeURIComponent(REDIS_HASH_KEY)}`, {
-          method: 'GET',
-          headers: {
-            Authorization: `Bearer ${redisToken}`,
-            Accept: 'application/json',
-          },
-        }),
-        fetch(
-          `${redisUrl}/hgetall/${encodeURIComponent(REDIS_LABELS_HASH_KEY)}`,
-          {
+      const [iconsRes, labelsRes, arcColorsRes, disinfectionRes, scalesRes] =
+        await Promise.all([
+          fetch(`${redisUrl}/hgetall/${encodeURIComponent(REDIS_HASH_KEY)}`, {
             method: 'GET',
             headers: {
               Authorization: `Bearer ${redisToken}`,
               Accept: 'application/json',
             },
-          }
-        ),
-        fetch(`${redisUrl}/get/arc_colors`, {
-          method: 'GET',
-          headers: {
-            Authorization: `Bearer ${redisToken}`,
-            Accept: 'application/json',
-          },
-        }),
-        fetch(
-          `${redisUrl}/hgetall/${encodeURIComponent(REDIS_DISINFECTION_HASH_KEY)}`,
-          {
+          }),
+          fetch(
+            `${redisUrl}/hgetall/${encodeURIComponent(REDIS_LABELS_HASH_KEY)}`,
+            {
+              method: 'GET',
+              headers: {
+                Authorization: `Bearer ${redisToken}`,
+                Accept: 'application/json',
+              },
+            }
+          ),
+          fetch(`${redisUrl}/get/arc_colors`, {
             method: 'GET',
             headers: {
               Authorization: `Bearer ${redisToken}`,
               Accept: 'application/json',
             },
-          }
-        ),
-      ]);
+          }),
+          fetch(
+            `${redisUrl}/hgetall/${encodeURIComponent(REDIS_DISINFECTION_HASH_KEY)}`,
+            {
+              method: 'GET',
+              headers: {
+                Authorization: `Bearer ${redisToken}`,
+                Accept: 'application/json',
+              },
+            }
+          ),
+          fetch(
+            `${redisUrl}/hgetall/${encodeURIComponent(REDIS_SCALES_HASH_KEY)}`,
+            {
+              method: 'GET',
+              headers: {
+                Authorization: `Bearer ${redisToken}`,
+                Accept: 'application/json',
+              },
+            }
+          ),
+        ]);
 
       if (!iconsRes.ok) {
         res.status(iconsRes.status).json({
@@ -178,6 +190,27 @@ export default async function handler(req: any, res: any) {
         }
       }
 
+      const markerScales: Record<string, number> = {};
+      if (scalesRes.ok) {
+        const scalesData = await scalesRes.json();
+        const rawScales: unknown = scalesData?.result;
+        if (Array.isArray(rawScales)) {
+          for (let i = 0; i < rawScales.length; i += 2) {
+            const field = String(rawScales[i] || '').trim();
+            const valNum = Math.round(Number(rawScales[i + 1]));
+            if (
+              field &&
+              Number.isFinite(valNum) &&
+              valNum >= 50 &&
+              valNum <= 250 &&
+              valNum !== 100
+            ) {
+              markerScales[field] = valNum;
+            }
+          }
+        }
+      }
+
       res.setHeader(
         'Cache-Control',
         'no-store, no-cache, must-revalidate, proxy-revalidate'
@@ -189,6 +222,7 @@ export default async function handler(req: any, res: any) {
         customLabels,
         arcColors,
         disinfectionRoutes,
+        markerScales,
       });
       return;
     } catch (err) {
@@ -275,16 +309,26 @@ export default async function handler(req: any, res: any) {
       body?.disinfectionRoute && typeof body.disinfectionRoute === 'object'
         ? body.disinfectionRoute
         : null;
+    const rawScaleItems: Array<{
+      farm_key?: unknown;
+      key?: unknown;
+      scale?: unknown;
+    }> = Array.isArray(body?.scaleItems)
+      ? body.scaleItems
+      : body?.markerScale && typeof body.markerScale === 'object'
+      ? [body.markerScale]
+      : [];
 
     if (
       rawIconItems.length === 0 &&
       rawLabelItems.length === 0 &&
       !hasArcColors &&
-      !rawDisinfectionRoute
+      !rawDisinfectionRoute &&
+      rawScaleItems.length === 0
     ) {
       res.status(400).json({
         error:
-          'Thiếu dữ liệu { farm_key, icon }, { farm_key, label }, { arcColors: {...} }, { disinfectionRoute: {...} } hoặc các mục cập nhật.',
+          'Thiếu dữ liệu { farm_key, icon }, { farm_key, label }, { arcColors: {...} }, { disinfectionRoute: {...} }, { markerScale: {...} } hoặc các mục cập nhật.',
       });
       return;
     }
@@ -394,6 +438,34 @@ export default async function handler(req: any, res: any) {
       };
     }
 
+    const scaleHsetArgs: string[] = [];
+    const scaleHdelArgs: string[] = [];
+
+    for (const item of rawScaleItems) {
+      const farmKey = String(item?.farm_key || item?.key || '').trim();
+      const scaleNum = Math.round(Number(item?.scale));
+
+      if (!FARM_KEY_REGEX.test(farmKey)) {
+        res.status(400).json({
+          error: `Định dạng farm_key "${farmKey}" cho kích thước biểu tượng không hợp lệ.`,
+        });
+        return;
+      }
+
+      if (!Number.isFinite(scaleNum) || scaleNum < 50 || scaleNum > 250) {
+        res.status(400).json({
+          error: 'Kích thước biểu tượng phải nằm trong khoảng 50% đến 250%.',
+        });
+        return;
+      }
+
+      if (scaleNum === 100) {
+        scaleHdelArgs.push(farmKey);
+      } else {
+        scaleHsetArgs.push(farmKey, String(scaleNum));
+      }
+    }
+
     try {
       const execRedisCmd = async (cmd: string[]) => {
         const r = await fetch(redisUrl, {
@@ -432,6 +504,12 @@ export default async function handler(req: any, res: any) {
           JSON.stringify(disinfectionPayload.config),
         ]);
       }
+      if (scaleHsetArgs.length > 0) {
+        await execRedisCmd(['HSET', REDIS_SCALES_HASH_KEY, ...scaleHsetArgs]);
+      }
+      if (scaleHdelArgs.length > 0) {
+        await execRedisCmd(['HDEL', REDIS_SCALES_HASH_KEY, ...scaleHdelArgs]);
+      }
 
       res.status(200).json({
         ok: true,
@@ -440,6 +518,8 @@ export default async function handler(req: any, res: any) {
         labelsUpdated: labelHsetArgs.length / 2,
         labelsDeleted: labelHdelArgs.length,
         disinfectionUpdated: disinfectionPayload ? 1 : 0,
+        scalesUpdated: scaleHsetArgs.length / 2,
+        scalesDeleted: scaleHdelArgs.length,
       });
       return;
     } catch (err) {

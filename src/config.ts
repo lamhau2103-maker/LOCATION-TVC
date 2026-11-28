@@ -219,6 +219,7 @@ export const APP_CONFIG = {
   userPrefsStorageKey: 'thaiviet_corp_user_prefs_v1',
   drivingDistancesStorageKey: 'thaiviet_corp_driving_distances_v1',
   disinfectionRoutesStorageKey: 'thaiviet_corp_disinfection_routes_v1',
+  markerScalesStorageKey: 'thaiviet_corp_marker_scales_v1',
 
   // Danh sách từ khoá LOẠI TRỪ (không nối đường từ Nhà máy Trung tâm & không tự động gán icon Gà/Heo)
   arcExcludeKeywords: [
@@ -255,6 +256,11 @@ export const DEFAULT_DISINFECTION_ROUTE_COLORS = {
   from: '#0EA5E9',
   to: '#38BDF8',
 };
+
+export const DEFAULT_MARKER_SCALE_PERCENT = 100;
+export const MIN_MARKER_SCALE_PERCENT = 50;
+export const MAX_MARKER_SCALE_PERCENT = 250;
+export const MARKER_SCALE_PRESETS = [80, 100, 130, 160, 200] as const;
 
 /**
  * Xác định mốc giờ trong ngày tự động theo giờ thực tế của thiết bị
