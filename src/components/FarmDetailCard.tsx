@@ -991,6 +991,7 @@ interface HubDetailCardProps {
   onSaveCustomLabel?: (farm: Farm, label: string) => Promise<void>;
   arcColors?: ArcColorConfig;
   onSaveArcColors?: (colors: ArcColorConfig) => Promise<void>;
+  onPreviewArcColors?: (colors: ArcColorConfig | null) => void;
   mobileSheetSnap?: MobileSheetSnap;
   onChangeMobileSheetSnap?: (snap: MobileSheetSnap) => void;
   drivingDistanceCache?: DrivingDistanceCache;
@@ -1017,6 +1018,7 @@ export const HubDetailCard: React.FC<HubDetailCardProps> = ({
   onSaveCustomLabel,
   arcColors,
   onSaveArcColors,
+  onPreviewArcColors,
   mobileSheetSnap = 'half',
   onChangeMobileSheetSnap,
   drivingDistanceCache,
@@ -1105,7 +1107,40 @@ export const HubDetailCard: React.FC<HubDetailCardProps> = ({
     setDraftArcColors(currentArcColors);
   }, [arcColors]);
 
+  useEffect(() => {
+    return () => {
+      onPreviewArcColors?.(null);
+    };
+  }, [onPreviewArcColors]);
+
   const hasUnsavedArcs = JSON.stringify(draftArcColors) !== JSON.stringify(currentArcColors);
+  const displayArcColors = hasUnsavedArcs ? draftArcColors : currentArcColors;
+
+  const isCompleteHex = (val: string) => /^#[0-9a-fA-F]{6}$/.test(val.trim());
+
+  const applyDraftArcColors = (next: ArcColorConfig) => {
+    setDraftArcColors(next);
+    if (onPreviewArcColors) {
+      onPreviewArcColors({
+        chicken: {
+          from: isCompleteHex(next.chicken.from)
+            ? next.chicken.from.trim()
+            : currentArcColors.chicken.from,
+          to: isCompleteHex(next.chicken.to)
+            ? next.chicken.to.trim()
+            : currentArcColors.chicken.to,
+        },
+        pig: {
+          from: isCompleteHex(next.pig.from)
+            ? next.pig.from.trim()
+            : currentArcColors.pig.from,
+          to: isCompleteHex(next.pig.to)
+            ? next.pig.to.trim()
+            : currentArcColors.pig.to,
+        },
+      });
+    }
+  };
 
   const PRESET_PALETTES = [
     { name: 'Mặc định', chicken: { from: '#FACC15', to: '#F97316' }, pig: { from: '#FACC15', to: '#FB7185' } },
@@ -1397,32 +1432,32 @@ export const HubDetailCard: React.FC<HubDetailCardProps> = ({
           <div className="mt-2.5 rounded-2xl border border-[#facc15]/60 bg-gradient-to-r from-amber-50/95 via-sky-50/90 to-rose-50/90 px-3.5 py-2.5 shadow-2xs">
             <div className="text-xs font-extrabold text-[#0f2a24] sm:text-sm">
               Độ phủ cung ứng:{' '}
-              <span style={{ color: currentArcColors.chicken.to }}>
+              <span style={{ color: displayArcColors.chicken.to }}>
                 {connectedChickenCount} trại gà
               </span>
               ,{' '}
-              <span style={{ color: currentArcColors.pig.to }}>
+              <span style={{ color: displayArcColors.pig.to }}>
                 {connectedPigCount} trại heo
               </span>
             </div>
             <div className="mt-1.5 flex flex-wrap items-center gap-3 text-[11px] font-bold text-emerald-950/70">
-              <span className="inline-flex items-center gap-1.5" style={{ color: currentArcColors.chicken.to }}>
+              <span className="inline-flex items-center gap-1.5" style={{ color: displayArcColors.chicken.to }}>
                 <span
                   className="h-2.5 w-4 rounded-full shadow-xs shrink-0"
                   style={{
-                    background: `linear-gradient(90deg, ${currentArcColors.chicken.from}, ${currentArcColors.chicken.to})`,
+                    background: `linear-gradient(90deg, ${displayArcColors.chicken.from}, ${displayArcColors.chicken.to})`,
                   }}
                 />
-                <span>Trại gà ({currentArcColors.chicken.from} → {currentArcColors.chicken.to})</span>
+                <span>Trại gà ({displayArcColors.chicken.from} → {displayArcColors.chicken.to})</span>
               </span>
-              <span className="inline-flex items-center gap-1.5" style={{ color: currentArcColors.pig.to }}>
+              <span className="inline-flex items-center gap-1.5" style={{ color: displayArcColors.pig.to }}>
                 <span
                   className="h-2.5 w-4 rounded-full shadow-xs shrink-0"
                   style={{
-                    background: `linear-gradient(90deg, ${currentArcColors.pig.from}, ${currentArcColors.pig.to})`,
+                    background: `linear-gradient(90deg, ${displayArcColors.pig.from}, ${displayArcColors.pig.to})`,
                   }}
                 />
-                <span>Trại heo ({currentArcColors.pig.from} → {currentArcColors.pig.to})</span>
+                <span>Trại heo ({displayArcColors.pig.from} → {displayArcColors.pig.to})</span>
               </span>
             </div>
           </div>
@@ -1451,7 +1486,13 @@ export const HubDetailCard: React.FC<HubDetailCardProps> = ({
                       <button
                         key={pal.name}
                         type="button"
-                        onClick={() => setDraftArcColors(pal.name === 'Mặc định' ? { chicken: { from: '#FACC15', to: '#F97316' }, pig: { from: '#FACC15', to: '#FB7185' } } : pal)}
+                        onClick={() =>
+                          applyDraftArcColors(
+                            pal.name === 'Mặc định'
+                              ? { chicken: { from: '#FACC15', to: '#F97316' }, pig: { from: '#FACC15', to: '#FB7185' } }
+                              : { chicken: { ...pal.chicken }, pig: { ...pal.pig } }
+                          )
+                        }
                         className="rounded-full border border-emerald-950/15 bg-white px-2 py-0.5 text-[10px] font-bold text-[#0f2a24] hover:border-[#2b8fd0] cursor-pointer"
                       >
                         {pal.name}
@@ -1468,14 +1509,14 @@ export const HubDetailCard: React.FC<HubDetailCardProps> = ({
                         <div className="flex items-center gap-1.5 mt-0.5">
                           <input
                             type="color"
-                            value={draftArcColors.chicken.from}
-                            onChange={(e) => setDraftArcColors({ ...draftArcColors, chicken: { ...draftArcColors.chicken, from: e.target.value } })}
+                            value={isCompleteHex(draftArcColors.chicken.from) ? draftArcColors.chicken.from : currentArcColors.chicken.from}
+                            onChange={(e) => applyDraftArcColors({ ...draftArcColors, chicken: { ...draftArcColors.chicken, from: e.target.value } })}
                             className="h-7 w-7 rounded border border-emerald-950/20 cursor-pointer"
                           />
                           <input
                             type="text"
                             value={draftArcColors.chicken.from}
-                            onChange={(e) => setDraftArcColors({ ...draftArcColors, chicken: { ...draftArcColors.chicken, from: e.target.value } })}
+                            onChange={(e) => applyDraftArcColors({ ...draftArcColors, chicken: { ...draftArcColors.chicken, from: e.target.value } })}
                             className="w-20 rounded border border-emerald-950/20 px-1.5 py-1 text-[11px] font-mono uppercase"
                           />
                         </div>
@@ -1485,14 +1526,14 @@ export const HubDetailCard: React.FC<HubDetailCardProps> = ({
                         <div className="flex items-center gap-1.5 mt-0.5">
                           <input
                             type="color"
-                            value={draftArcColors.chicken.to}
-                            onChange={(e) => setDraftArcColors({ ...draftArcColors, chicken: { ...draftArcColors.chicken, to: e.target.value } })}
+                            value={isCompleteHex(draftArcColors.chicken.to) ? draftArcColors.chicken.to : currentArcColors.chicken.to}
+                            onChange={(e) => applyDraftArcColors({ ...draftArcColors, chicken: { ...draftArcColors.chicken, to: e.target.value } })}
                             className="h-7 w-7 rounded border border-emerald-950/20 cursor-pointer"
                           />
                           <input
                             type="text"
                             value={draftArcColors.chicken.to}
-                            onChange={(e) => setDraftArcColors({ ...draftArcColors, chicken: { ...draftArcColors.chicken, to: e.target.value } })}
+                            onChange={(e) => applyDraftArcColors({ ...draftArcColors, chicken: { ...draftArcColors.chicken, to: e.target.value } })}
                             className="w-20 rounded border border-emerald-950/20 px-1.5 py-1 text-[11px] font-mono uppercase"
                           />
                         </div>
@@ -1509,14 +1550,14 @@ export const HubDetailCard: React.FC<HubDetailCardProps> = ({
                         <div className="flex items-center gap-1.5 mt-0.5">
                           <input
                             type="color"
-                            value={draftArcColors.pig.from}
-                            onChange={(e) => setDraftArcColors({ ...draftArcColors, pig: { ...draftArcColors.pig, from: e.target.value } })}
+                            value={isCompleteHex(draftArcColors.pig.from) ? draftArcColors.pig.from : currentArcColors.pig.from}
+                            onChange={(e) => applyDraftArcColors({ ...draftArcColors, pig: { ...draftArcColors.pig, from: e.target.value } })}
                             className="h-7 w-7 rounded border border-emerald-950/20 cursor-pointer"
                           />
                           <input
                             type="text"
                             value={draftArcColors.pig.from}
-                            onChange={(e) => setDraftArcColors({ ...draftArcColors, pig: { ...draftArcColors.pig, from: e.target.value } })}
+                            onChange={(e) => applyDraftArcColors({ ...draftArcColors, pig: { ...draftArcColors.pig, from: e.target.value } })}
                             className="w-20 rounded border border-emerald-950/20 px-1.5 py-1 text-[11px] font-mono uppercase"
                           />
                         </div>
@@ -1526,14 +1567,14 @@ export const HubDetailCard: React.FC<HubDetailCardProps> = ({
                         <div className="flex items-center gap-1.5 mt-0.5">
                           <input
                             type="color"
-                            value={draftArcColors.pig.to}
-                            onChange={(e) => setDraftArcColors({ ...draftArcColors, pig: { ...draftArcColors.pig, to: e.target.value } })}
+                            value={isCompleteHex(draftArcColors.pig.to) ? draftArcColors.pig.to : currentArcColors.pig.to}
+                            onChange={(e) => applyDraftArcColors({ ...draftArcColors, pig: { ...draftArcColors.pig, to: e.target.value } })}
                             className="h-7 w-7 rounded border border-emerald-950/20 cursor-pointer"
                           />
                           <input
                             type="text"
                             value={draftArcColors.pig.to}
-                            onChange={(e) => setDraftArcColors({ ...draftArcColors, pig: { ...draftArcColors.pig, to: e.target.value } })}
+                            onChange={(e) => applyDraftArcColors({ ...draftArcColors, pig: { ...draftArcColors.pig, to: e.target.value } })}
                             className="w-20 rounded border border-emerald-950/20 px-1.5 py-1 text-[11px] font-mono uppercase"
                           />
                         </div>
@@ -1544,7 +1585,7 @@ export const HubDetailCard: React.FC<HubDetailCardProps> = ({
                   <div className="flex items-center justify-between pt-1">
                     <button
                       type="button"
-                      onClick={() => setDraftArcColors({ chicken: { from: '#FACC15', to: '#F97316' }, pig: { from: '#FACC15', to: '#FB7185' } })}
+                      onClick={() => applyDraftArcColors({ chicken: { from: '#FACC15', to: '#F97316' }, pig: { from: '#FACC15', to: '#FB7185' } })}
                       className="rounded-lg border border-emerald-950/15 bg-white px-2.5 py-1 text-[11px] font-bold text-[#0f2a24] cursor-pointer"
                     >
                       Khôi phục mặc định
@@ -1552,7 +1593,10 @@ export const HubDetailCard: React.FC<HubDetailCardProps> = ({
                     <div className="flex items-center gap-2">
                       <button
                         type="button"
-                        onClick={() => setDraftArcColors(currentArcColors)}
+                        onClick={() => {
+                          setDraftArcColors(currentArcColors);
+                          onPreviewArcColors?.(null);
+                        }}
                         className="rounded-lg bg-emerald-950/10 px-2.5 py-1 text-[11px] font-bold text-[#0f2a24] cursor-pointer"
                       >
                         Huỷ

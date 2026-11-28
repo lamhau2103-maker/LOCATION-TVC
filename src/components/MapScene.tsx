@@ -128,8 +128,6 @@ const GLOBE_BUMP_TEXTURE_URL =
   'https://unpkg.com/three-globe/example/img/earth-topology.png';
 
 const BASEMAP_CANVAS_BG = MAP_TILE_PRELOAD_CONFIG.groundColorStreet;
-const CONTROL_TOWER_PIG_COLOR = '#E11D48';
-const CONTROL_TOWER_CHICKEN_COLOR = '#F59E0B';
 const CONTROL_TOWER_SPEED_KM_PER_SEC = 16;
 const ARRIVAL_RIPPLE_DURATION_MS = 760;
 
@@ -762,6 +760,19 @@ interface RipplePointItem {
   sizePx: number;
 }
 
+interface ResolvedRouteColorPair {
+  from: string;
+  to: string;
+  fromRgb: [number, number, number];
+  toRgb: [number, number, number];
+}
+
+interface ResolvedRouteColorsState {
+  chicken: ResolvedRouteColorPair;
+  pig: ResolvedRouteColorPair;
+  other: ResolvedRouteColorPair;
+}
+
 interface ArcGeometryItem {
   farm: Farm;
   hubLng: number;
@@ -770,8 +781,6 @@ interface ArcGeometryItem {
   farmLat: number;
   ctrlPt: [number, number];
   fullCoords: Array<[number, number]>;
-  lineColor: string;
-  dotRgb: [number, number, number];
   transitMs: number;
   cycleMs: number;
   startDelayMs: number;
@@ -933,6 +942,50 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
     );
     const highlightedArcFarmIdRef = useRef<string | null>(null);
     const drawParticlesFrameRef = useRef<(nowMs?: number) => void>(() => {});
+    const colorsRef = useRef<ResolvedRouteColorsState>({
+      chicken: {
+        from: arcColors.chicken.from,
+        to: arcColors.chicken.to,
+        fromRgb: parseHexToRgb(arcColors.chicken.from),
+        toRgb: parseHexToRgb(arcColors.chicken.to),
+      },
+      pig: {
+        from: arcColors.pig.from,
+        to: arcColors.pig.to,
+        fromRgb: parseHexToRgb(arcColors.pig.from),
+        toRgb: parseHexToRgb(arcColors.pig.to),
+      },
+      other: {
+        from: APP_CONFIG.colors.categories.other.hex,
+        to: APP_CONFIG.colors.categories.other.hex,
+        fromRgb: parseHexToRgb(APP_CONFIG.colors.categories.other.hex),
+        toRgb: parseHexToRgb(APP_CONFIG.colors.categories.other.hex),
+      },
+    });
+
+    useEffect(() => {
+      colorsRef.current = {
+        chicken: {
+          from: arcColors.chicken.from,
+          to: arcColors.chicken.to,
+          fromRgb: parseHexToRgb(arcColors.chicken.from),
+          toRgb: parseHexToRgb(arcColors.chicken.to),
+        },
+        pig: {
+          from: arcColors.pig.from,
+          to: arcColors.pig.to,
+          fromRgb: parseHexToRgb(arcColors.pig.from),
+          toRgb: parseHexToRgb(arcColors.pig.to),
+        },
+        other: {
+          from: APP_CONFIG.colors.categories.other.hex,
+          to: APP_CONFIG.colors.categories.other.hex,
+          fromRgb: parseHexToRgb(APP_CONFIG.colors.categories.other.hex),
+          toRgb: parseHexToRgb(APP_CONFIG.colors.categories.other.hex),
+        },
+      };
+      drawParticlesFrameRef.current();
+    }, [arcColors]);
 
     const rippleLayerRef = useRef<HTMLDivElement | null>(null);
     const farmRippleRefs = useRef<Map<string, HTMLDivElement>>(new Map());
@@ -3216,13 +3269,6 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
           ((idx * 0.38196601125) % 1) * cycleMs
         );
 
-        const lineColor =
-          farm.category === 'pig'
-            ? CONTROL_TOWER_PIG_COLOR
-            : farm.category === 'chicken'
-            ? CONTROL_TOWER_CHICKEN_COLOR
-            : getCategoryConfig(farm.category).hex;
-
         return {
           farm,
           hubLng,
@@ -3231,8 +3277,6 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
           farmLat,
           ctrlPt,
           fullCoords,
-          lineColor,
-          dotRgb: parseHexToRgb(lineColor),
           transitMs,
           cycleMs,
           startDelayMs,
@@ -3408,22 +3452,47 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
       }
 
       ctx.save();
+      const activeColors = colorsRef.current;
 
-      // 1. Vẽ đường dẫn Bezier mảnh (1px, opacity 0.18; hoặc 2px / 0.9 khi hover và 0.05 cho các tuyến còn lại)
+      const getRouteColorPair = (farm: Farm): ResolvedRouteColorPair =>
+        farm.category === 'pig'
+          ? activeColors.pig
+          : farm.category === 'chicken'
+          ? activeColors.chicken
+          : activeColors.other;
+
+      // 1. Vẽ đường dẫn Bezier mảnh bằng gradient từ Màu đầu (Nhà máy) ➔ Màu cuối (Trại) (opacity 0.25)
+      //    Khi hover: làm nổi bật tuyến đang chọn bằng màu cuối tùy chỉnh (2px, opacity 0.9) và làm mờ các tuyến khác (0.05)
       for (const item of projectedArcs) {
         const { arc, p0, p1, p2, isHighlighted, isDimmed } = item;
-        const [r, g, b] = arc.dotRgb;
-        const lineOpacity = isHighlighted ? 0.9 : isDimmed ? 0.05 : 0.18;
+        const { fromRgb, toRgb } = getRouteColorPair(arc.farm);
+        const lineOpacity = isHighlighted ? 0.9 : isDimmed ? 0.05 : 0.25;
 
         ctx.beginPath();
         ctx.moveTo(p0.x, p0.y);
         ctx.quadraticCurveTo(p1.x, p1.y, p2.x, p2.y);
         ctx.lineWidth = isHighlighted ? 2 : 1;
-        ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, ${lineOpacity})`;
+
+        if (isHighlighted) {
+          ctx.strokeStyle = `rgba(${toRgb[0]}, ${toRgb[1]}, ${toRgb[2]}, ${lineOpacity})`;
+        } else if (Math.abs(p2.x - p0.x) < 0.5 && Math.abs(p2.y - p0.y) < 0.5) {
+          ctx.strokeStyle = `rgba(${toRgb[0]}, ${toRgb[1]}, ${toRgb[2]}, ${lineOpacity})`;
+        } else {
+          const lineGrad = ctx.createLinearGradient(p0.x, p0.y, p2.x, p2.y);
+          lineGrad.addColorStop(
+            0,
+            `rgba(${fromRgb[0]}, ${fromRgb[1]}, ${fromRgb[2]}, ${lineOpacity})`
+          );
+          lineGrad.addColorStop(
+            1,
+            `rgba(${toRgb[0]}, ${toRgb[1]}, ${toRgb[2]}, ${lineOpacity})`
+          );
+          ctx.strokeStyle = lineGrad;
+        }
         ctx.stroke();
       }
 
-      // 2. Vẽ vòng gợn sóng tại chân icon trang trại đúng khoảnh khắc chấm hàng cập bến
+      // 2. Vẽ vòng gợn sóng tại chân icon trang trại đúng khoảnh khắc chấm hàng cập bến theo màu cuối đang chọn
       for (const item of projectedArcs) {
         const { arc, p2, isHighlighted, isDimmed } = item;
         const phaseMs =
@@ -3442,7 +3511,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
           Math.pow(1 - rp, 1.5);
         if (ringAlpha <= 0.02) continue;
 
-        const [r, g, b] = arc.dotRgb;
+        const [r, g, b] = getRouteColorPair(arc.farm).toRgb;
         ctx.beginPath();
         ctx.arc(p2.x, p2.y, ringRadius, 0, Math.PI * 2);
         ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${(ringAlpha * 0.14).toFixed(
@@ -3454,7 +3523,7 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         ctx.stroke();
       }
 
-      // 3. Vẽ chấm tròn sắc nét (radius 3.5px, viền trắng 1.5px) chạy tốc độ địa lý đều đặn từ FEED FACTORY ➔ Trại
+      // 3. Vẽ chấm tròn sắc nét (radius 3.5px, viền trắng 1.5px) nội suy màu mượt từ Màu đầu ➔ Màu cuối dọc hành trình t (0 ➔ 1)
       ctx.lineWidth = 1.5;
       for (const item of projectedArcs) {
         const { arc, p0, p1, p2, isHighlighted, isDimmed } = item;
@@ -3469,15 +3538,15 @@ export const MapScene = React.forwardRef<MapSceneHandle, MapSceneProps>(
         const y = inv * inv * p0.y + 2 * inv * rawT * p1.y + rawT * rawT * p2.y;
 
         const dotRadius = isHighlighted ? 4 : 3.5;
-        const [r, g, b] = arc.dotRgb;
+        const { fromRgb, toRgb } = getRouteColorPair(arc.farm);
+        const r = Math.round(fromRgb[0] + (toRgb[0] - fromRgb[0]) * rawT);
+        const g = Math.round(fromRgb[1] + (toRgb[1] - fromRgb[1]) * rawT);
+        const b = Math.round(fromRgb[2] + (toRgb[2] - fromRgb[2]) * rawT);
         const dotAlpha = isDimmed ? 0.18 : 1;
 
         ctx.beginPath();
         ctx.arc(x, y, dotRadius, 0, Math.PI * 2);
-        ctx.fillStyle =
-          dotAlpha >= 1
-            ? arc.lineColor
-            : `rgba(${r}, ${g}, ${b}, ${dotAlpha})`;
+        ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${dotAlpha})`;
         ctx.fill();
         ctx.strokeStyle =
           dotAlpha >= 1 ? '#FFFFFF' : `rgba(255, 255, 255, ${dotAlpha})`;

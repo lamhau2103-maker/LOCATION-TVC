@@ -447,6 +447,9 @@ export default function App() {
       pig: { from: '#FACC15', to: '#FB7185' },
     };
   });
+  const [previewArcColors, setPreviewArcColors] =
+    useState<ArcColorConfig | null>(null);
+  const effectiveArcColors = previewArcColors || arcColors;
 
   const [isServerIconConnected, setIsServerIconConnected] =
     useState<boolean>(true);
@@ -481,6 +484,7 @@ export default function App() {
         throw new Error(data.error || 'Không thể lưu bảng màu tia lên Upstash.');
       }
       setArcColors(nextColors);
+      setPreviewArcColors(null);
       try {
         localStorage.setItem(
           'thaiviet_corp_arc_colors_v1',
@@ -1792,7 +1796,7 @@ export default function App() {
         stage={stage}
         logoUrl={logoUrl}
         farms={farms}
-        arcColors={arcColors}
+        arcColors={effectiveArcColors}
         newlyAddedIds={newlyAddedIds}
         removingFarms={removingFarms}
         bouncingFarmId={bouncingFarmId}
@@ -1937,6 +1941,7 @@ export default function App() {
             onSaveCustomLabel={handleSaveCustomLabel}
             arcColors={arcColors}
             onSaveArcColors={handleSaveArcColors}
+            onPreviewArcColors={setPreviewArcColors}
             mobileSheetSnap={mobileSheetSnap}
             onChangeMobileSheetSnap={setMobileSheetSnap}
             drivingDistanceCache={drivingDistanceCache}
